@@ -1,5 +1,3 @@
-export inference_model
-
 """
     gen_K(cfg::FourierDiscreteCfg)
 

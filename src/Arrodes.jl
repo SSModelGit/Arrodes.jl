@@ -14,9 +14,6 @@ include(joinpath("priors", "Priors.jl"))
 include(joinpath("core", "Core.jl"))
 @reexport using .Core
 
-include(joinpath("rl", "RL.jl"))
-@reexport using .RL
-
 include(joinpath("inference", "Inference.jl"))
 @reexport using .Inference
 

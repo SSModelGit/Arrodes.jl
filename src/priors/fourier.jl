@@ -53,6 +53,10 @@ function phase_bin_support_and_probs(cfg::FourierDiscreteCfg)
     return supp, ws
 end
 
+@inline f_from_i(i::Int, cfg::FourierDiscreteCfg) = i * cfg.Δf
+@inline A_from_i(i::Int, cfg::FourierDiscreteCfg) = i * cfg.ΔA
+@inline ϕ_from_i(i::Int, cfg::FourierDiscreteCfg) = 2π * (i / cfg.P)
+
 ################################
 # Fourier Feature Key Operations
 ################################

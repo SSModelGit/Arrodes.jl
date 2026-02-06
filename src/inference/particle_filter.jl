@@ -1,5 +1,3 @@
-export particle_filter
-
 function particle_filter(observations::Vector{Int}, π_dist::ScoreΠDist, agent_params::Dict, state_data::Matrix,
                          n_particles::Int = 50; ess_thresh::Float64 = 0.5,
                          rejuv_modes::Int = 8, rejuv_recent_actions::Int = 3,
