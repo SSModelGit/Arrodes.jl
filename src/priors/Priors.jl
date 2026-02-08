@@ -1,6 +1,6 @@
 module Priors
 
-using Random, LinearAlgebra, Statistics
+using LinearAlgebra, Statistics
 
 using MuKumari
 

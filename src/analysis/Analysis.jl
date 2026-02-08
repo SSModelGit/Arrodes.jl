@@ -17,7 +17,7 @@ using ..Utils
 using ..Priors
 using ..Core
 using ..Inference
-import ..Arrodes: RunPack
+import ..Arrodes: FourierDiscreteCfg, ScoreΠDist, MuEnvSpec, RunPack
 
 include("metrics.jl")
 export pf_degeneracy, objective_recon_metrics, policy_match_acc

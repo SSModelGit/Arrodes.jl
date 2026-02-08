@@ -1,3 +1,6 @@
+using Parameters: @with_kw
+using Gen
+
 export FourierDiscreteCfg, ScoreΠDist, MuEnvSpec, METHOD_LABELS, RunPack
 
 @with_kw struct FourierDiscreteCfg

@@ -1,6 +1,6 @@
 module Inference
 
-using Random, LinearAlgebra, Statistics
+using LinearAlgebra, Statistics
 using Gen: @gen, @trace, Distribution, UnknownChange, NoChange, categorical, choicemap, get_choice, get_choices, get_retval
 using GenParticleFilters: pf_initialize, pf_rejuvenate!, pf_resample!, pf_update!, effective_sample_size, select, mh
 using GenParticleFilters: get_traces, get_log_weights

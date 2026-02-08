@@ -1,6 +1,6 @@
 module Core
 
-using Random, LinearAlgebra, Statistics
+using LinearAlgebra, Statistics
 using Match: @match
 using POMDPs, POMDPTools, POMDPLinter, MCTS
 
