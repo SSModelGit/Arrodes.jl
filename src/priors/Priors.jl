@@ -1,10 +1,12 @@
 module Priors
 
-using LinearAlgebra, Statistics
+using LinearAlgebra, Statistics, Random
+using Distributions: Categorical
 
 using MuKumari
 
 import ..Arrodes: FourierDiscreteCfg, ScoreΠDist
+import ..Utils: randcat
 
 include("fields.jl")
 export make_pomdp_objective_from_field, objective_grid_from_field, objective_grid_from_mdp

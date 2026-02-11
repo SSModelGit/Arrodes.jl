@@ -1,7 +1,7 @@
 using Parameters: @with_kw
 using Gen
 
-export FourierDiscreteCfg, ScoreΠDist, MuEnvSpec, METHOD_LABELS, RunPack
+export FourierDiscreteCfg, ScoreΠDist, MuEnvSpec, METHOD_LABELS, RunPack, actiondirac
 
 @with_kw struct FourierDiscreteCfg
     Kmax::Int = 10
@@ -62,7 +62,7 @@ const actiondirac = ActionDirac()
 
 const METHOD_LABELS = ["Open-Ended SIPS", "IQ-SIPS"]
 
-struct RunPack
+@with_kw struct RunPack
     run_id::Int                 # top-level run index in the BSON
     agent::String               # "ag1".."ag7"
     inst::Int                   # instance index (k)

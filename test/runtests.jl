@@ -1,6 +1,9 @@
 using Arrodes
 using Test
 
-@testset "Arrodes.jl" begin
-    # Write your tests here.
-end
+# packages used across MULTIPLE test files
+using Gen
+
+include("test_types.jl")
+include("test_utils.jl")
+include("test_fields.jl")

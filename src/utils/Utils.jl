@@ -2,6 +2,7 @@ module Utils
 
 using Random, Statistics, LinearAlgebra
 using BSON, JLD2
+import GeoInterface as GI
 
 # shape_state_as_obs, KAgentPOMDP, MuEnv
 using MuKumari
