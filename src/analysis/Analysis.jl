@@ -15,7 +15,7 @@ using GenParticleFilters: get_traces, get_log_weights
 
 using ..Utils
 using ..Priors
-using ..Core
+using ..RL
 using ..Inference
 import ..Arrodes: FourierDiscreteCfg, ScoreΠDist, MuEnvSpec, RunPack
 

@@ -7,7 +7,7 @@ using MuKumari
 
 using ..Utils
 using ..Priors
-using ..Core
+using ..RL
 using ..Analysis
 import ..Arrodes: ScoreΠDist
 

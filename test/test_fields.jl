@@ -12,15 +12,24 @@ using Random
         cfg = FourierDiscreteCfg(Kmax=5, P=16)
         rng = Random.default_rng()
         
-        # Test sampling a fourier key
+        # Test sampling a fourier key (returns tuple: (K, fx_idx, fy_idx, A_idx, ϕ_idx))
         key = sample_fourier_key(cfg; rng=rng)
-        @test isa(key, Vector)
-        @test length(key) > 0
-        
-        # Test decoding fourier key
+        @test isa(key, Tuple)
+        K = key[1]
+        @test isa(K, Int)
+        @test 1 <= K <= cfg.Kmax
+
+        # ensure discrete index vectors have length K
+        @test length(key[2]) == K
+        @test length(key[3]) == K
+        @test length(key[4]) == K
+        @test length(key[5]) == K
+
+        # Test decoding fourier key (returns NamedTuple with fields K, fx, fy, A, ϕ, ...)
         ff = decode_fourier_key(key, cfg)
-        @test isa(ff, Vector)
-        @test length(ff) == length(key)
+        @test isa(ff, NamedTuple)
+        @test ff.K == K
+        @test length(ff.fx) == K
     end
 
     @testset "Fourier basis functions" begin
@@ -81,16 +90,40 @@ using Random
         
         # Generate a random fourier key
         key = sample_fourier_key(cfg; K_override=2, rng=rng)
+        bank = decode_fourier_key(key, cfg)
         
         # Create scalar field
-        field = make_fourier_scalar_field(key, cfg)
+        field = make_fourier_scalar_field(bank)
         @test isa(field, Function)
         
         # Test field evaluation
         test_point = [5.0, 5.0]
-        val = field(test_point)
+        val = field(test_point...)
         @test isa(val, Float64)
         @test isfinite(val)
+    end
+
+    @testset "POMDP field conversion" begin
+        cfg = FourierDiscreteCfg(Kmax=2, P=16)
+        key = sample_fourier_key(cfg; K_override=2, rng=Random.default_rng())
+        bank = decode_fourier_key(key, cfg)
+        field = make_fourier_scalar_field(bank)
+
+        pomdp_obj = make_pomdp_objective_from_field(field)
+
+        menv = build_shared_menv()
+        agent_params = Dict(:start => [1.0 1.0], :dimensions => (0.0, 10.0), :menv => menv, :obcs => Any[])
+        mdp = build_kagent_pomdp(agent_params, pomdp_obj; name="field_mdp")
+
+        xs = range(0.0, 10.0; length=5)
+        ys = range(0.0, 10.0; length=7)
+
+        Zf = objective_grid_from_field(field, xs, ys)
+        Zm = objective_grid_from_mdp(mdp, xs, ys)
+
+        @test size(Zf) == (length(ys), length(xs))
+        @test size(Zm) == size(Zf)
+        @test isapprox(Zf, Zm; atol=1e-6)
     end
 
     @testset "Hamming distance between fourier keys" begin

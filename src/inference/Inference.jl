@@ -6,7 +6,7 @@ using GenParticleFilters: pf_initialize, pf_rejuvenate!, pf_resample!, pf_update
 using GenParticleFilters: get_traces, get_log_weights
 
 import ..Priors
-import ..Core
+import ..RL
 import ..Arrodes: FourierDiscreteCfg, ScoreΠDist
 
 include("gen_model.jl")
