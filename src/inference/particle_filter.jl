@@ -33,7 +33,7 @@ function particle_filter(observations::Vector{Int}, π_dist::ScoreΠDist, agent_
             pf_rejuvenate!(state, mh, (select(sels...),))
 
             # after a resample/rejuv event is a great time to refine top policies
-            maybe_refine_policies!(π_dist, state, agent_params; topk=refine_topk)
+            RL.maybe_refine_policies!(π_dist, state, agent_params; topk=refine_topk)
         end
 
         # Update with new observation
@@ -44,7 +44,7 @@ function particle_filter(observations::Vector{Int}, π_dist::ScoreΠDist, agent_
 
         # periodic refinement (lightweight)
         if (n % refine_every) == 0
-            maybe_refine_policies!(π_dist, state, agent_params; topk=refine_topk)
+            RL.maybe_refine_policies!(π_dist, state, agent_params; topk=refine_topk)
         end
     end
 

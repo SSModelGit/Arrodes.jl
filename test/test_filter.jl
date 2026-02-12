@@ -1,5 +1,6 @@
 using Gen
 using Random
+using GenParticleFilters
 
 @testset "Gen-based Generative Model" begin
     @testset "Gen model functions exist" begin
@@ -86,8 +87,46 @@ using Random
         key = sample_fourier_key(cfg; K_override=2, rng=rng)
         ff = decode_fourier_key(key, cfg)
         
-        # Verify it returns a vector with proper structure
-        @test isa(ff, Vector)
-        @test all(isfinite.(ff))
+        # Verify it returns a NamedTuple with numeric fields
+        @test isa(ff, NamedTuple)
+        numeric_vals = vcat(ff.fx, ff.fy, ff.A, ff.ϕ)
+        @test all(isfinite.(numeric_vals))
+    end
+
+    @testset "inference_model functional" begin
+        spec = MuEnvSpec()
+        menv = build_shared_menv(spec)
+        π_dist = ScoreΠDist()
+        agent_params = Dict(:start => [1.0 1.0], :dimensions => (0.0, 10.0), :menv => menv, :obcs => Any[])
+        # TODO: Bad
+        # Use the function `shape_state_as_obs` from `MuKumari` to do the observation vector shaping.
+        state_data = [1.0 2.0 3.0; 1.0 2.0 3.0]
+
+        trace = Gen.simulate(inference_model, (1, π_dist, agent_params, state_data))
+        @test isa(trace, Gen.Trace)
+
+        key = Gen.get_retval(trace)
+        @test isa(key, Tuple)
+        @test key in π_dist.prop_names
+    end
+
+    @testset "particle_filter functional" begin
+        spec = MuEnvSpec()
+        menv = build_shared_menv(spec)
+        π_dist = ScoreΠDist()
+        agent_params = Dict(:start => [1.0 1.0], :dimensions => (0.0, 10.0), :menv => menv, :obcs => Any[])
+        state_data = [1.0 2.0 3.0; 1.0 2.0 3.0]
+        observations = [1, 1, 1]
+
+        n_particles = 6
+        state = particle_filter(observations, π_dist, agent_params, state_data, n_particles)
+        @test isa(state, Any)
+
+        traces = get_traces(state)
+        @test isa(traces, Vector)
+        @test length(traces) == n_particles
+
+        ess = effective_sample_size(state)
+        @test isfinite(ess) && ess >= 0
     end
 end

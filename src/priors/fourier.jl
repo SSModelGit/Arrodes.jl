@@ -98,13 +98,32 @@ Decode Fourier key of the form (K, fx_i, fy_i, A_i, ϕ_i) into continuous params
 Assumes fx_i etc are integer vectors of length K (or length Kmax, if fixed-bank).
 """
 function decode_fourier_key(key, cfg::FourierDiscreteCfg)
-    K, fx_i, fy_i, A_i, ϕ_i = key
-    # use only active prefix if vectors are longer
-    fx = f_from_i.(fx_i[1:K], Ref(cfg))
-    fy = f_from_i.(fy_i[1:K], Ref(cfg))
-    A  = A_from_i.(A_i[1:K],  Ref(cfg))
-    ϕ  = ϕ_from_i.(ϕ_i[1:K],  Ref(cfg))
-    return (K=K, fx=fx, fy=fy, A=A, ϕ=ϕ, fx_i=fx_i[1:K], fy_i=fy_i[1:K], A_i=A_i[1:K], ϕ_i=ϕ_i[1:K])
+    # Support two input key shapes:
+    #  - tuple key: (K, fx_i, fy_i, A_i, ϕ_i) -> return NamedTuple bank (old behavior)
+    #  - vector key: Vector of per-mode tuples -> convert to NamedTuple bank
+    if key isa Tuple
+        K, fx_i, fy_i, A_i, ϕ_i = key
+        # use only active prefix if vectors are longer
+        fx = f_from_i.(fx_i[1:K], Ref(cfg))
+        fy = f_from_i.(fy_i[1:K], Ref(cfg))
+        A  = A_from_i.(A_i[1:K],  Ref(cfg))
+        ϕ  = ϕ_from_i.(ϕ_i[1:K],  Ref(cfg))
+        return (K=K, fx=fx, fy=fy, A=A, ϕ=ϕ, fx_i=fx_i[1:K], fy_i=fy_i[1:K], A_i=A_i[1:K], ϕ_i=ϕ_i[1:K])
+    elseif key isa AbstractVector
+        modes = key
+        K = length(modes)
+        fx = [m[1] for m in modes]
+        fy = [m[2] for m in modes]
+        A  = [m[3] for m in modes]
+        ϕ  = [m[4] for m in modes]
+        fx_i = [m[5] for m in modes]
+        fy_i = [m[6] for m in modes]
+        A_i  = [m[7] for m in modes]
+        ϕ_i  = [m[8] for m in modes]
+        return (K=K, fx=fx, fy=fy, A=A, ϕ=ϕ, fx_i=fx_i, fy_i=fy_i, A_i=A_i, ϕ_i=ϕ_i)
+    else
+        error("Unsupported key type for decode_fourier_key: ", typeof(key))
+    end
 end
 
 """
@@ -184,11 +203,21 @@ Definition:
 If `scaleQ=true`, divides by max(1,K) so magnitude doesn't explode with K.
 """
 function make_fourier_scalar_field(bank; scaleQ::Bool=true)
-    K  = bank.K
-    fx = bank.fx
-    fy = bank.fy
-    A  = bank.A
-    ϕ  = bank.ϕ
+    # accept either the named-tuple bank or a Vector of per-mode tuples
+    if bank isa AbstractVector
+        modes = bank
+        K = length(modes)
+        fx = [m[1] for m in modes]
+        fy = [m[2] for m in modes]
+        A  = [m[3] for m in modes]
+        ϕ  = [m[4] for m in modes]
+    else
+        K  = bank.K
+        fx = bank.fx
+        fy = bank.fy
+        A  = bank.A
+        ϕ  = bank.ϕ
+    end
     invK = scaleQ ? (1.0 / max(1, K)) : 1.0
 
     field = function (x::Real, y::Real)
@@ -209,6 +238,20 @@ Build objective scalar field from Fourier key+cfg and evaluate on grid.
 """
 function objective_grid_from_key(key, cfg, xs, ys)
     bank = decode_fourier_key(key, cfg)
-    field = make_fourier_scalar_field(bank; scaleQ=true)
+    if bank isa AbstractVector
+        K = length(bank)
+        fx = [m.fx for m in bank]
+        fy = [m.fy for m in bank]
+        A  = [m.A  for m in bank]
+        ϕ  = [m.ϕ  for m in bank]
+        fx_i = [m.fx_i for m in bank]
+        fy_i = [m.fy_i for m in bank]
+        A_i  = [m.A_i  for m in bank]
+        ϕ_i  = [m.ϕ_i  for m in bank]
+        bank_nt = (K=K, fx=fx, fy=fy, A=A, ϕ=ϕ, fx_i=fx_i, fy_i=fy_i, A_i=A_i, ϕ_i=ϕ_i)
+        field = make_fourier_scalar_field(bank_nt; scaleQ=true)
+    else
+        field = make_fourier_scalar_field(bank; scaleQ=true)
+    end
     return objective_grid_from_field(field, xs, ys)
 end
