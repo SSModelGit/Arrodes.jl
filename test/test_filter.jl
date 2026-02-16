@@ -1,6 +1,9 @@
 using Gen
 using Random
 using GenParticleFilters
+using POMDPs
+using MuKumari
+using Flux
 
 @testset "Gen-based Generative Model" begin
     @testset "Gen model functions exist" begin
@@ -96,11 +99,36 @@ using GenParticleFilters
     @testset "inference_model functional" begin
         spec = MuEnvSpec()
         menv = build_shared_menv(spec)
-        π_dist = ScoreΠDist()
         agent_params = Dict(:start => [1.0 1.0], :dimensions => (0.0, 10.0), :menv => menv, :obcs => Any[])
-        # TODO: Bad
-        # Use the function `shape_state_as_obs` from `MuKumari` to do the observation vector shaping.
-        state_data = [1.0 2.0 3.0; 1.0 2.0 3.0]
+
+        # Build a minimal KAgentPOMDP for shaping observations
+        mdp = build_kagent_pomdp(agent_params, x->0.0)
+
+        # Prepare action mapping utilities to pass as mdp_params into ScoreΠDist
+        alist = collect(POMDPs.actions(mdp))
+        a_1hot = sym -> Float64.(Flux.onehot(sym, alist))
+        a_1hotall = Float64.(Flux.onehotbatch(alist, alist))
+
+        # Instantiate ScoreΠDist with mdp_params so downstream code can use action mappings
+        π_dist = ScoreΠDist(mdp_params = [alist, a_1hot, a_1hotall], fourier_cfg = FourierDiscreteCfg())
+
+        cols = 3
+        obs0 = shape_state_as_obs(mdp, blindstart_KAgentState(mdp, mdp.start))
+        rows = length(obs0)
+        state_data = zeros(Float64, rows, cols)
+
+        # simulate movements using POMDPs.gen (random actions) and record actions
+        actions_used = Vector{Symbol}(undef, cols)
+        rng = Random.default_rng()
+        s = blindstart_KAgentState(mdp, mdp.start)
+        for t in 1:cols
+            a = alist[rand(rng, 1:length(alist))]
+            actions_used[t] = a
+            res = POMDPs.gen(mdp, s, a, rng)
+            s = res.sp
+            o = shape_state_as_obs(mdp, s)
+            state_data[:, t] .= Float64.(o)
+        end
 
         trace = Gen.simulate(inference_model, (1, π_dist, agent_params, state_data))
         @test isa(trace, Gen.Trace)
@@ -113,10 +141,36 @@ using GenParticleFilters
     @testset "particle_filter functional" begin
         spec = MuEnvSpec()
         menv = build_shared_menv(spec)
-        π_dist = ScoreΠDist()
         agent_params = Dict(:start => [1.0 1.0], :dimensions => (0.0, 10.0), :menv => menv, :obcs => Any[])
-        state_data = [1.0 2.0 3.0; 1.0 2.0 3.0]
-        observations = [1, 1, 1]
+
+        mdp = build_kagent_pomdp(agent_params, x->0.0)
+
+        # Prepare action mapping utilities and ScoreΠDist as above
+        alist = collect(POMDPs.actions(mdp))
+        a_1hot = sym -> Float64.(Flux.onehot(sym, alist))
+        a_1hotall = Float64.(Flux.onehotbatch(alist, alist))
+        π_dist = ScoreΠDist(mdp_params = [alist, a_1hot, a_1hotall], fourier_cfg = FourierDiscreteCfg())
+
+        cols = 3
+        obs0 = shape_state_as_obs(mdp, blindstart_KAgentState(mdp, mdp.start))
+        rows = length(obs0)
+        state_data = zeros(Float64, rows, cols)
+
+        actions_used = Vector{Symbol}(undef, cols)
+        rng = Random.default_rng()
+        s = blindstart_KAgentState(mdp, mdp.start)
+        for t in 1:cols
+            a = alist[rand(rng, 1:length(alist))]
+            actions_used[t] = a
+            res = POMDPs.gen(mdp, s, a, rng)
+            s = res.sp
+            o = shape_state_as_obs(mdp, s)
+            state_data[:, t] .= Float64.(o)
+        end
+
+        # Convert actions_used to one-hot columns then to indices using Flux
+        A = Float64.(Flux.onehotbatch(actions_used, alist))
+        observations = onehot_cols_to_aidx(A)
 
         n_particles = 6
         state = particle_filter(observations, π_dist, agent_params, state_data, n_particles)
