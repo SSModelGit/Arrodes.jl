@@ -36,6 +36,54 @@ function deep_q_solver(pomdp::KAgentPOMDP; solver_params=[:all, 10000, 2, 512])
     return 𝒮_net
 end
 
+function _warn_on_buffer_mismatch(anon_data, mdp)
+    # anon_data expected to be an ExperienceBuffer-like object with .data Dict
+    if !hasproperty(anon_data, :data)
+        @warn "IQL training: provided demo buffer has no `.data` field; cannot validate dtypes"
+        return
+    end
+    D = anon_data.data
+    # check presence
+    for key in (:s, :sp, :r, :a)
+        if !haskey(D, key)
+            @warn "IQL training: buffer missing expected key" key=key
+        end
+    end
+
+    # dtype checks
+    if haskey(D, :s)
+        if eltype(D[:s]) != Float32
+            @warn "IQL training: state observations are not Float32; model may be Float32 leading to conversions" eltype=eltype(D[:s]) recommended=Float32
+        end
+        # dimension check against mdp state space
+        try
+            S = state_space(mdp)
+            expected = Crux.dim(S)[1]
+            actual = size(D[:s], 1)
+            if expected != actual
+                @warn "IQL training: state dimension mismatch between mdp and buffer" mdp_state_dim=expected buffer_state_dim=actual
+            end
+        catch err
+            # ignore if state_space not available
+        end
+    end
+    if haskey(D, :sp)
+        if eltype(D[:sp]) != Float32
+            @warn "IQL training: next-state observations are not Float32; model may be Float32 leading to conversions" eltype=eltype(D[:sp]) recommended=Float32
+        end
+    end
+    if haskey(D, :r)
+        if eltype(D[:r]) != Float32
+            @warn "IQL training: rewards are not Float32; consider using Float32 rewards for Flux models" eltype=eltype(D[:r]) recommended=Float32
+        end
+    end
+    if haskey(D, :a)
+        if eltype(D[:a]) != Bool
+            @warn "IQL training: action matrix is not Bool; expected Bool one-hot columns" eltype=eltype(D[:a]) recommended=Bool
+        end
+    end
+end
+
 function solver_from_type(pomdp::KAgentPOMDP, type::Symbol=:dpw; solver_params)
     @match type begin
         :mcts => mcts_solver(pomdp;   solver_params=solver_params)
@@ -71,6 +119,8 @@ function quick_IQL(kworld::KWorld, anon_data::ExperienceBuffer; plot_metrics::Bo
     N = anon_data.elements
     mdp = get_agent(kworld, "ag1")
 
+    _warn_on_buffer_mismatch(anon_data, mdp)
+
     as = actions(mdp)
     S = state_space(mdp)
     γ = Float32(discount(mdp))
@@ -89,6 +139,8 @@ function quick_IQL(mdp::KAgentPOMDP, anon_data::ExperienceBuffer)
     as = actions(mdp)
     S = state_space(mdp)
     γ = Float32(discount(mdp))
+
+    _warn_on_buffer_mismatch(anon_data, mdp)
 
     A() = DiscreteNetwork(Chain(Dense(S.dims[1], 64, relu), Dense(64, 64, relu), Dense(64, length(as))), as; dev=Flux.cpu)
 

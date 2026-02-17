@@ -86,7 +86,7 @@ import GeoInterface as GI
 
     @testset "Fourier key decoding consistency" begin
         cfg = FourierDiscreteCfg(Kmax=5, P=16)
-        rng = Random.default_rng()
+        rng = Random.MersenneTwister(1234)
         
         # Generate key and decode it
         key = sample_fourier_key(cfg; K_override=2, rng=rng)
@@ -130,7 +130,7 @@ import GeoInterface as GI
 
         # simulate movements using POMDPs.gen (random actions) and record actions
         actions_used = Vector{Symbol}(undef, cols)
-        rng = Random.default_rng()
+        rng = Random.MersenneTwister(1234)
         s = blindstart_KAgentState(mdp, mdp.start)
         for t in 1:cols
             a = alist[rand(rng, 1:length(alist))]
@@ -147,6 +147,11 @@ import GeoInterface as GI
         key = Gen.get_retval(trace)
         @test isa(key, Tuple)
         @test key in π_dist.prop_names
+        # Validate that the key decodes to valid Fourier parameters
+        ff_key = decode_fourier_key(key, π_dist.fourier_cfg)
+        @test isa(ff_key, NamedTuple)
+        numeric_vals_k = vcat(ff_key.fx, ff_key.fy, ff_key.A, ff_key.ϕ)
+        @test all(isfinite.(numeric_vals_k))
     end
 
     @testset "particle_filter functional" begin
@@ -177,7 +182,7 @@ import GeoInterface as GI
         state_data = zeros(Float64, rows, cols)
 
         actions_used = Vector{Symbol}(undef, cols)
-        rng = Random.default_rng()
+        rng = Random.MersenneTwister(1234)
         s = blindstart_KAgentState(mdp, mdp.start)
         for t in 1:cols
             a = alist[rand(rng, 1:length(alist))]
@@ -199,8 +204,27 @@ import GeoInterface as GI
         traces = get_traces(state)
         @test isa(traces, Vector)
         @test length(traces) == n_particles
+        # Each trace should be a Gen.Trace and have a valid choices map
+        @test all(t -> isa(t, Gen.Trace), traces)
+        @test all(tr -> isa(Gen.get_choices(tr), Gen.ChoiceMap), traces)
+
+        # Check log-weights are finite and normalize to proper weights
+        logw = get_log_weights(state)
+        @test isa(logw, AbstractVector)
+        finite_mask = isfinite.(logw)
+        @test any(finite_mask)  # at least one finite weight
+        lw = logw[finite_mask]
+        m = maximum(lw)
+        w = exp.(lw .- m)
+        Z = sum(w)
+        weights = w ./ Z
+        @test all(isfinite.(weights)) && all(weights .>= 0.0)
+        @test abs(sum(weights) - 1.0) < 1e-8
 
         ess = effective_sample_size(state)
         @test isfinite(ess) && ess >= 0
+        # Assert a minimum ESS to avoid fully degenerate particle sets
+        min_ess = max(1, n_particles * 0.1)
+        @test ess >= min_ess
     end
 end
