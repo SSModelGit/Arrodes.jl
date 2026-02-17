@@ -74,9 +74,9 @@ Returns a cached set of keys mapping to each feature and associated params.
     K = @trace(gen_K(cfg), :K)
 
     # supports & probs (precompute once)
-    f_supp, f_w = freq_bin_support_and_probs(cfg)
-    a_supp, a_w = amp_bin_support_and_probs(cfg)
-    p_supp, p_w = phase_bin_support_and_probs(cfg)
+    f_supp, f_w = Priors.freq_bin_support_and_probs(cfg)
+    a_supp, a_w = Priors.amp_bin_support_and_probs(cfg)
+    p_supp, p_w = Priors.phase_bin_support_and_probs(cfg)
 
     # fixed bank of discrete indices (length Kmax)
     fx_i = Vector{Int}(undef, cfg.Kmax)
@@ -108,47 +108,11 @@ Returns a cached set of keys mapping to each feature and associated params.
     return (key=key, K=K, fx=fx, fy=fy, A=A, ϕ=ϕ, fx_i=fx_i, fy_i=fy_i, A_i=A_i, ϕ_i=ϕ_i)
 end
 
-
-@gen function gen_fourier_bank_fixed(K::Int, cfg::FourierDiscreteCfg)
-    # supports & probs (precompute once)
-    f_supp, f_w = Priors.freq_bin_support_and_probs(cfg)
-    a_supp, a_w = Priors.amp_bin_support_and_probs(cfg)
-    p_supp, p_w = Priors.phase_bin_support_and_probs(cfg)
-
-    fx_i = Vector{Int}(undef, K)
-    fy_i = Vector{Int}(undef, K)
-    A_i  = Vector{Int}(undef, K)
-    ϕ_i  = Vector{Int}(undef, K)
-
-    for m in 1:K
-        fx_idx = @trace(categorical(f_w), (:mode, m) => :fx_idx)
-        fy_idx = @trace(categorical(f_w), (:mode, m) => :fy_idx)
-        A_idx  = @trace(categorical(a_w), (:mode, m) => :A_idx)
-        ϕ_idx  = @trace(categorical(p_w), (:mode, m) => :ϕ_idx)
-
-        fx_i[m] = f_supp[fx_idx]
-        fy_i[m] = f_supp[fy_idx]
-        A_i[m]  = a_supp[A_idx]
-        ϕ_i[m]  = p_supp[ϕ_idx]
-    end
-
-    # continuous params for the active prefix
-    fx = Priors.f_from_i.(fx_i, Ref(cfg))
-    fy = Priors.f_from_i.(fy_i, Ref(cfg))
-    A  = Priors.A_from_i.(A_i,  Ref(cfg))
-    ϕ  = Priors.ϕ_from_i.(ϕ_i,  Ref(cfg))
-
-    out = Vector{Any}(undef, K)
-    for m in 1:K
-        out[m] = (fx[m], fy[m], A[m], ϕ[m], fx_i[m], fy_i[m], A_i[m], ϕ_i[m])
-    end
-    return out
-end
-
 @gen function inference_model(N::Int, π_dist::ScoreΠDist, agent_params::Dict, state_data::Matrix)
-    # sample discretized Fourier parameters (traceable)
+    # sample discretized Fourier bank (cfg-only overload) — do not rely on K-argument overload
     fourier = @trace(gen_fourier_bank_fixed(π_dist.fourier_cfg), :fourier)
     key = fourier.key
+
     # register for downstream reporting / priors
     RL.register_key_if_new!(π_dist, key)
 

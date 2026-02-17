@@ -5,6 +5,8 @@ using Gen: @gen, @trace, Distribution, UnknownChange, NoChange, categorical, cho
 using GenParticleFilters: pf_initialize, pf_rejuvenate!, pf_resample!, pf_update!, effective_sample_size, select, mh
 using GenParticleFilters: get_traces, get_log_weights
 
+using MuKumari: blindstart_KAgentState
+
 import ..Priors
 import ..RL
 import ..Arrodes: FourierDiscreteCfg, ScoreΠDist

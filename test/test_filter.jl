@@ -5,6 +5,8 @@ using POMDPs
 using MuKumari
 using Flux
 
+import GeoInterface as GI
+
 @testset "Gen-based Generative Model" begin
     @testset "Gen model functions exist" begin
         @test :gen_K in names(Arrodes)
@@ -48,15 +50,15 @@ using Flux
         @test isa(gen_fourier_bank_fixed, Gen.GenerativeFunction)
         
         cfg = FourierDiscreteCfg(Kmax=5, P=16)
-        K = 3
         
-        # Simulate the model
-        trace = Gen.simulate(gen_fourier_bank_fixed, (K, cfg))
+        # Simulate the cfg-only model (gen_fourier_bank_fixed samples K internally)
+        trace = Gen.simulate(gen_fourier_bank_fixed, (cfg,))
         @test isa(trace, Gen.Trace)
         
-        key = Gen.get_retval(trace)
-        @test isa(key, Vector)
-        @test length(key) == K
+        bank = Gen.get_retval(trace)
+        @test isa(bank, NamedTuple)
+        @test isa(bank.K, Int)
+        @test 1 <= bank.K <= cfg.Kmax
     end
 
     @testset "inference_model" begin
@@ -99,7 +101,16 @@ using Flux
     @testset "inference_model functional" begin
         spec = MuEnvSpec()
         menv = build_shared_menv(spec)
-        agent_params = Dict(:start => [1.0 1.0], :dimensions => (0.0, 10.0), :menv => menv, :obcs => Any[])
+        # Add two simple square obstacles so nearest_obstacles can return k=2
+        agent_params = Dict(
+            :start => [1.0 1.0],
+            :dimensions => (0.0, 10.0),
+            :menv => menv,
+            :obcs => [
+                GI.Polygon([[(2.0, 2.0), (2.0, 3.0), (3.0, 3.0), (3.0, 2.0), (2.0, 2.0)]]),
+                GI.Polygon([[(5.0, 5.0), (5.0, 6.0), (6.0, 6.0), (6.0, 5.0), (5.0, 5.0)]])
+            ]
+        )
 
         # Build a minimal KAgentPOMDP for shaping observations
         mdp = build_kagent_pomdp(agent_params, x->0.0)
@@ -141,7 +152,16 @@ using Flux
     @testset "particle_filter functional" begin
         spec = MuEnvSpec()
         menv = build_shared_menv(spec)
-        agent_params = Dict(:start => [1.0 1.0], :dimensions => (0.0, 10.0), :menv => menv, :obcs => Any[])
+        # Add two simple square obstacles so nearest_obstacles can return k=2
+        agent_params = Dict(
+            :start => [1.0 1.0],
+            :dimensions => (0.0, 10.0),
+            :menv => menv,
+            :obcs => [
+                GI.Polygon([[(2.0, 2.0), (2.0, 3.0), (3.0, 3.0), (3.0, 2.0), (2.0, 2.0)]]),
+                GI.Polygon([[(5.0, 5.0), (5.0, 6.0), (6.0, 6.0), (6.0, 5.0), (5.0, 5.0)]])
+            ]
+        )
 
         mdp = build_kagent_pomdp(agent_params, x->0.0)
 

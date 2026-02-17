@@ -1,8 +1,10 @@
 [deps]
 Arrodes = "95b063a4-db16-4801-a32b-edd561b67298"
 BSON = "fbb218c0-5317-5bc6-957e-2ee96dd4b1f0"
+Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
 Gen = "ea4f424c-a589-11e8-07c0-fd5c91b9da4a"
 GenParticleFilters = "56b76ac4-72ef-411e-b419-6d312ed86a6f"
+GeoInterface = "cf35fbd7-0cd7-5166-be24-54bfbe79505f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MCTS = "e12ccd36-dcad-5f33-8774-9175229e7b33"
 MuKumari = "28f59e21-8c37-415f-8237-13dbde849877"
