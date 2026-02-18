@@ -245,3 +245,193 @@ function make_final_inference_figures(out;
 
     return (p1=p1, p2=p2, best_iqsips=e1, best_both=e2)
 end
+
+"""
+    plot_all_objectives_from_cache(cache; gridsize=140, max_per_page=9, cmap=:viridis, savepath=nothing)
+
+Paginated multi-panel heatmaps of every objective field stored in `cache[:records]`.
+If `savepath` is provided (directory), PNG files are saved as `objectives_page_<p>.png` and a vector of filenames is returned.
+Otherwise a Plots.jl object for the single page (if one) or last page is returned.
+"""
+function plot_all_objectives_from_cache(cache::Dict; gridsize::Int=140, max_per_page::Int=9, cmap=:viridis, savepath=nothing)
+    records = cache[:records]
+    n = length(records)
+    if n == 0
+        @warn "No records found in cache"
+        return nothing
+    end
+
+    pages = ceil(Int, n / max_per_page)
+    saved_files = String[]
+    p_last = nothing
+
+    for page in 1:pages
+        idx0 = (page-1)*max_per_page + 1
+        idx1 = min(page*max_per_page, n)
+        ids = idx0:idx1
+        m = length(ids)
+
+        # choose grid layout
+        ncol = ceil(Int, sqrt(m))
+        nrow = ceil(Int, m / ncol)
+
+        p = plot(layout=(nrow, ncol), size=(ncol*380, nrow*320))
+
+        for (ii, rec_i) in enumerate(ids)
+            rec = records[rec_i]
+            # reconstruct mdp for bounds
+            mdp, _ = reconstruct_mdp_from_cache(rec, cache[:muenv_spec])
+            xs, ys = _grid_from_mdp(mdp; gridsize=gridsize)
+
+            # compute objective grid using stored key+cfg helper
+            Z = objective_grid_from_key(rec[:key], rec[:cfg], xs, ys)
+
+            tit = "id=$(rec[:id]) $(rec[:sweep])=$(rec[:level])"
+            heatmap!(p, xs, ys, Z; subplot=ii, aspect_ratio=1, title=tit, xlabel="x", ylabel="y", colorbar_title="obj", c=cmap)
+        end
+
+        if savepath !== nothing
+            isdir(savepath) || mkpath(savepath)
+            fname = joinpath(savepath, "objectives_page_$(page).png")
+            savefig(p, fname)
+            push!(saved_files, fname)
+        end
+        p_last = p
+    end
+
+    if savepath !== nothing
+        return saved_files
+    end
+    return p_last
+end
+
+
+"""
+    compare_iql_vs_true_policy(cache, e; gridsize=80, solver_type=:mcts, solver_params=[:dpw, 1000, 10.0], show_quiver=true, savepath=nothing)
+
+For the cache record referenced by eval `e`, trains a quick IQL policy on the anonymized buffer stored in the cache and computes, across a grid of states, the action
+action chosen by:
+ - a planning solver (MCTS/DPW) that we treat as the "true"/expert policy
+ - the quick_IQL learned policy
+
+Produces a 1x3 figure: (true action quiver, IQL action quiver, agreement heatmap). If `savepath` is provided the PNG is written and the filename returned; otherwise the Plots.jl object is returned.
+"""
+function compare_iql_vs_true_policy(cache::Dict, e; gridsize::Int=80, solver_type::Symbol=:mcts, solver_params=[:dpw, 1000, 10.0], show_quiver::Bool=true, savepath=nothing)
+    rec = cache_record_for_eval(cache, e)
+    muenv_spec = cache[:muenv_spec]
+
+    mdp, agent_params = reconstruct_mdp_from_cache(rec, muenv_spec)
+
+    # Recreate anon buffer and train quick IQL
+    anon_data = Dict{Symbol, Matrix}(rec[:anon_data])
+    anon_buf  = ExperienceBuffer(anon_data, size(anon_data[:s],2), 1, Array{Int64}[], nothing, 0)
+
+    # Train quick IQL (may be fast) on this mdp + anon buffer
+    π_iql, _, _ = quick_IQL(mdp, anon_buf)
+
+    # Build planner (true policy)
+    𝒮 = solver_from_type(mdp, solver_type; solver_params=solver_params)
+    # solver_from_type may return an array for :all; pick first if so
+    if isa(𝒮, AbstractArray)
+        𝒮 = 𝒮[1]
+    end
+    π_true = solve(𝒮, mdp)
+
+    # helpers
+    as = actions(mdp)
+    na = length(as)
+
+    # function mapping action symbol -> unit vector for quiver; fallback to angular mapping
+    function action_to_unit_vector(asymb)
+        s = Symbol(asymb)
+        if s in (:up, :north)
+            return (0.0, 1.0)
+        elseif s in (:down, :south)
+            return (0.0, -1.0)
+        elseif s in (:left, :west)
+            return (-1.0, 0.0)
+        elseif s in (:right, :east)
+            return (1.0, 0.0)
+        elseif s in (:up_right, :ne, :northeast)
+            v = 1/sqrt(2); return (v, v)
+        elseif s in (:up_left, :nw, :northwest)
+            v = 1/sqrt(2); return (-v, v)
+        elseif s in (:down_right, :se, :southeast)
+            v = 1/sqrt(2); return (v, -v)
+        elseif s in (:down_left, :sw, :southwest)
+            v = 1/sqrt(2); return (-v, -v)
+        else
+            # fallback: map index -> angle
+            idx = findfirst(x->x==asymb, as)
+            if idx === nothing
+                return (0.0, 0.0)
+            end
+            ang = 2π*(idx-1)/max(na,1)
+            return (cos(ang), sin(ang))
+        end
+    end
+
+    # Grid
+    xs, ys = _grid_from_mdp(mdp; gridsize=gridsize)
+    nx = length(xs); ny = length(ys)
+
+    U_true = zeros(Float64, ny, nx)
+    V_true = zeros(Float64, ny, nx)
+    U_iql  = zeros(Float64, ny, nx)
+    V_iql  = zeros(Float64, ny, nx)
+    Z_agree = zeros(Float64, ny, nx)
+
+    @inbounds for (j, y) in enumerate(ys)
+        for (i, x) in enumerate(xs)
+            s = _state_at_xy(mdp, x, y)
+            # true action (planner)
+            try
+                a_true = action(π_true, s)[1]
+            catch err
+                # fallback to evaluating Q-values
+                as_list = actions(mdp)
+                all_a_onehot = Flux.onehotbatch(as_list, as_list)
+                qv = vec(Crux.value(π_true, MuKumari.shape_state_as_obs(mdp, s), all_a_onehot))
+                aidx = argmax(qv)
+                a_true = as_list[aidx]
+            end
+
+            # iql action
+            try
+                a_iql = action(π_iql, s)[1]
+            catch err
+                as_list = actions(mdp)
+                all_a_onehot = Flux.onehotbatch(as_list, as_list)
+                qv = vec(Crux.value(π_iql, MuKumari.shape_state_as_obs(mdp, s), all_a_onehot))
+                aidx = argmax(qv)
+                a_iql = as_list[aidx]
+            end
+
+            ux_t, vy_t = action_to_unit_vector(a_true)
+            ux_i, vy_i = action_to_unit_vector(a_iql)
+
+            U_true[j,i] = ux_t
+            V_true[j,i] = vy_t
+            U_iql[j,i]  = ux_i
+            V_iql[j,i]  = vy_i
+
+            Z_agree[j,i] = (a_true == a_iql) ? 1.0 : 0.0
+        end
+    end
+
+    # Build plots
+    p_true = show_quiver ? quiver(xs, ys, quiver=(U_true, V_true); aspect_ratio=1, title="Planner (true) policy", xlabel="x", ylabel="y") : heatmap(xs, ys, Z_agree; aspect_ratio=1, title="Planner actions (overlay suppressed)")
+    p_iql  = show_quiver ? quiver(xs, ys, quiver=(U_iql, V_iql); aspect_ratio=1, title="IQL learned policy", xlabel="x", ylabel="y") : heatmap(xs, ys, Z_agree; aspect_ratio=1, title="IQL actions (overlay suppressed)")
+    p_agree = heatmap(xs, ys, Z_agree; aspect_ratio=1, title="Action agreement (1=agree)", colorbar_title="agree")
+
+    p_all = plot(p_true, p_iql, p_agree; layout=(1,3), size=(1400,480))
+
+    if savepath !== nothing
+        isdir(savepath) || mkpath(savepath)
+        fname = joinpath(savepath, "iql_vs_true_id_$(rec[:id])_sweep_$(rec[:sweep])_level_$(rec[:level]).png")
+        savefig(p_all, fname)
+        return fname
+    end
+
+    return p_all
+end

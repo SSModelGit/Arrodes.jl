@@ -1,0 +1,7 @@
+[deps]
+Arrodes = "95b063a4-db16-4801-a32b-edd561b67298"
+BSON = "fbb218c0-5317-5bc6-957e-2ee96dd4b1f0"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+OpenSSL_jll = "458c3c95-2e84-50aa-8efc-19380b2a3a95"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+cuDNN = "02a925ec-e4fe-4b08-9a7e-0d78e3d38ccd"

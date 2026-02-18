@@ -513,7 +513,7 @@ function ablation_main(bson_path::String;
         meta = Dict(:n_particles => n_particles, :iql_gridN => iql_gridN, :gridsize => gridsize)
     )
     # Save the entire out wholesale
-    BSON.@save joinpath(script_dir, "ablation_out_wholesale.bson") out
+    # BSON.@save joinpath(script_dir, "ablation_out_wholesale.bson") out
 
     return out
 end

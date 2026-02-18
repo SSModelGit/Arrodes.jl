@@ -10,7 +10,8 @@ using CUDA, cuDNN
 using Crux
 using Flux
 
-using Gen: @gen, @trace, Distribution, UnknownChange, NoChange, categorical, choicemap, get_choice, get_choices, get_retval
+using Gen: @gen, @trace, Distribution, UnknownChange, NoChange, categorical, choicemap,
+           get_choice, get_choices, get_retval
 using GenParticleFilters: pf_initialize, pf_rejuvenate!, pf_resample!, pf_update!, effective_sample_size, select, mh
 using GenParticleFilters: get_traces, get_log_weights
 
@@ -24,13 +25,15 @@ export beliefstate_for_pomdp, van_solver, dpw_solver, mcts_solver, deep_q_solver
 
 include("scoredist.jl")
 export get_proposal_names, get_proposal_prior, get_idxable_proposal_prior_list, π_alist, π_a_1hot, π_a_1hotall,
-       ensure_mdp!, get_𝒮_proposal, get_π_proposal, store_π_iql, get_π_iql,
+       ensure_mdp!, register_key_if_new!, get_𝒮_proposal, get_π_proposal, store_π_iql, get_π_iql,
        top_objectives, top_key
 
 include("training.jl")
-export training_budget, surrogate_dataset_from_iql_grid, _policy_model, maybe_refine_policies!, _warm_start_params!, ensure_policy_trained_to!
+export training_budget, surrogate_dataset_from_iql_grid, _policy_model, _warm_start_params!, 
+       maybe_refine_policies!, ensure_policy_trained_to!
 
 include("policies.jl")
-export proposal_boltzmann, greedy_action_symbol_from_boltzmann, rollout_greedy_policy, qpolicy_action, softq_policy, rollout_experience_buffer
+export proposal_boltzmann, greedy_action_symbol_from_boltzmann, qpolicy_action, softq_policy,
+       rollout_greedy_policy, rollout_experience_buffer
 
 end
