@@ -58,7 +58,17 @@ using MuKumari
         tmpb = tempname() * ".bson"
         BSON.@save tmpb runs=[run]
 
-        packs = load_runpacks(tmpb)
+        meta = Dict(
+            "data_type" => "multi_run",
+            "data_path" => tmpb,
+            "loader" => Dict("run_container_key" => "runs", "run_index_key" => :ind_exps),
+            "state" => Dict(
+                "state_field_sizes" => [2, 2, 12, 10, 1],
+                "keep_state_fields" => Bool[1, 1, 1, 0, 1]
+            )
+        )
+
+        packs = load_runpacks(meta)
         @test length(packs) == 1
         p = packs[1]
         @test p.run_id == 1

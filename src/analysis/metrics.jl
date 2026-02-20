@@ -8,7 +8,7 @@ function pf_degeneracy(pf_state, π_dist; n_particles::Int)
     finite = isfinite.(logw)
     all_ninf = !any(finite)
 
-    tops = top_objectives(pf_state, π_dist; topk=5)
+    tops = RL.top_objectives(pf_state, π_dist; topk=5)
     nunique = length(tops)
     collapsed = (nunique == 1) && (!isempty(tops)) && (tops[1].count == n_particles)
 
@@ -33,12 +33,12 @@ end
 Compute the RMSE of the objective field reconstruction.
 """
 function objective_recon_metrics(pf_state, π_dist, mdp; gridsize::Int=120)
-    tops = top_objectives(pf_state, π_dist; topk=1)
+    tops = RL.top_objectives(pf_state, π_dist; topk=1)
     isempty(tops) && return (rmse_z=NaN, corr=NaN)
 
     key = tops[1].key
-    ff = decode_fourier_key(key, π_dist.fourier_cfg)
-    field = make_fourier_scalar_field(ff; scaleQ=true)
+    ff = Priors.decode_fourier_key(key, π_dist.fourier_cfg)
+    field = Priors.make_fourier_scalar_field(ff; scaleQ=true)
 
     lo, hi = mdp.dimensions
     xs = range(lo, hi; length=gridsize)
@@ -68,10 +68,10 @@ Evaluate the accuracy of the filter's top inferred policy against the true polic
 Currently evaluates using a deterministic approach (greedy argmax) instead of a non-deterministic method.
 """
 function policy_match_acc(pf_state, π_dist, agent_params, state_data, obs_aidx)
-    tops = top_objectives(pf_state, π_dist; topk=1)
+    tops = RL.top_objectives(pf_state, π_dist; topk=1)
     isempty(tops) && return (acc=NaN, N=0)
     key = tops[1].key
-    mdp_hat = ensure_mdp!(π_dist, key)
+    mdp_hat = RL.ensure_mdp!(π_dist, key)
 
     temperature = get(agent_params, :policy_temperature, 1.0)
 
@@ -79,7 +79,7 @@ function policy_match_acc(pf_state, π_dist, agent_params, state_data, obs_aidx)
     pred = Vector{Int}(undef, T)
     @inbounds for t in 1:T
         s = blindstart_KAgentState(mdp_hat, reshape(state_data[:,t][1:2], (1,2)))
-        b = vec(proposal_boltzmann(π_dist, key, s; temperature=temperature))
+        b = vec(RL.proposal_boltzmann(π_dist, key, s; temperature=temperature))
         pred[t] = argmax(b)
     end
     return (acc=mean(pred .== obs_aidx), N=T)

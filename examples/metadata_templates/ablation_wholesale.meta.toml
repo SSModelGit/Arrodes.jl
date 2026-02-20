@@ -1,0 +1,55 @@
+schema_version = 1.0.0
+data_type = "ablation_wholesale"
+data_path = "/path/to/ablation_wholesale_TIMESTAMP.bson"
+format = "bson"
+created_at = "2026-02-19T12:00:00Z"
+created_by = "iq_sips_ablation.jl"
+notes = "Complete ablation study output with cache, evaluations, and summaries"
+
+[source]
+cache_meta_path = "/path/to/ablation_cache_TIMESTAMP.meta.toml"
+generation_mode = "generate"  # or "load"
+
+[structure]
+top_level_key = "out"
+fields = ["cache_meta_path", "cache", "evals", "summaries", "meta"]
+
+[evals_structure]
+description = "Vector of evaluation records (one per objective) with mode A vs mode B comparisons"
+mode_A = "IQ-SIPS inference using real expert data (SoftQ rollouts)"
+mode_B = "IQ-SIPS inference using IQL-generated surrogate data"
+mode_A_label = "Real Data"
+mode_B_label = "IQL Surrogate"
+
+[sweeps]
+keys = ["K", "freq_range", "amp_range"]
+
+[sweeps.K]
+description = "Number of Fourier features"
+xlabel = "Number of Features (K)"
+
+[sweeps.freq_range]
+description = "Frequency range bandwidth"
+xlabel = "Frequency Range"
+
+[sweeps.amp_range]
+description = "Amplitude range"
+xlabel = "Amplitude Range"
+
+[metrics]
+keys = ["ess", "rmse", "acc"]
+
+[metrics.ess]
+ylabel = "Effective Sample Size"
+field_A = "essA"
+field_B = "essB"
+
+[metrics.rmse]
+ylabel = "RMSE"
+field_A = "rmseA"
+field_B = "rmseB"
+
+[metrics.acc]
+ylabel = "Policy Accuracy"
+field_A = "accA"
+field_B = "accB"

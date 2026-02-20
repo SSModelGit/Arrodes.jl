@@ -23,15 +23,15 @@ function eval_pack(pack::RunPack;
     # 1) train IQL on anon buffer
     # In geninf_on_rff.jl, quick_IQL(kworld, anon_data) trains using mdp=get_agent(kworld,"ag1").
     # Here we use a minimal per-mdp pattern (works if OnlineIQLearn etc already imported):
-    π_iql, 𝒟_iql, _, _ = quick_IQL(mdp, pack.anon)
+    π_iql, 𝒟_iql, _, _ = RL.quick_IQL(mdp, pack.anon)
 
-    # 2) build π_dist action mappings from this mdp’s action set
+    # 2) build π_dist action mappings from this mdp's action set
     as = actions(mdp)
     action_list = [as, a->Flux.onehot(a, as), Flux.onehotbatch(as, as)]
     π_dist = ScoreΠDist(; mdp_params=action_list)
 
     # 3) agent_params from mdp
-    agent_params = agent_params_from_mdp(mdp)
+    agent_params = Utils.agent_params_from_mdp(mdp)
     T = size(pack.full.data[:s], 2) # num of cols in state # TODO: should be ...data.elements
 
     # 4) Decide on T
@@ -42,17 +42,17 @@ function eval_pack(pack::RunPack;
     ########################
     # PF uses (state_data[:,1:T], aidx[1:T]) from the full buffer
     state_data = pack.full.data[:s][:, data_slices]
-    obs_aidx   = onehot_cols_to_aidx(pack.full.data[:a][:, data_slices])
+    obs_aidx   = Utils.onehot_cols_to_aidx(pack.full.data[:a][:, data_slices])
 
-    pf_real = particle_filter(obs_aidx, π_dist, agent_params, state_data, n_particles;
+    pf_real = Inference.particle_filter(obs_aidx, π_dist, agent_params, state_data, n_particles;
                               ess_thresh=ess_thresh, refine_every=refine_every, refine_topk=refine_topk)
 
     ###############################
     # Mode B: IQL grid surrogate PF
     ###############################
-    iql_state_data, iql_obs_aidx, _ = surrogate_dataset_from_iql_grid(π_dist, π_iql, mdp; eval_num=iql_gridN)
+    iql_state_data, iql_obs_aidx, _ = RL.surrogate_dataset_from_iql_grid(π_dist, π_iql, mdp; eval_num=iql_gridN)
 
-    pf_iql = particle_filter(iql_obs_aidx, π_dist, agent_params, iql_state_data, n_particles;
+    pf_iql = Inference.particle_filter(iql_obs_aidx, π_dist, agent_params, iql_state_data, n_particles;
                              ess_thresh=ess_thresh, refine_every=refine_every, refine_topk=refine_topk)
 
     return (

@@ -1,7 +1,10 @@
 module Utils
 
 using Random, Statistics, LinearAlgebra
+using ArgCheck
 using BSON, JLD2
+using Dates
+using TOML
 import GeoInterface as GI
 
 # shape_state_as_obs, KAgentPOMDP, MuEnv
@@ -22,6 +25,7 @@ include("env.jl")
 export build_kagent_pomdp, build_shared_menv, agent_params_from_mdp
 
 include("dataset_io.jl")
-export safe_get_obstacle_count, _normalize_run_payload, load_runpacks, select_skeleton_mdps
+export safe_get_obstacle_count, _normalize_run_payload, infer_metadata_path, read_data_metadata, write_cache_metadata,
+       load_runpacks, select_skeleton_mdps
 
 end

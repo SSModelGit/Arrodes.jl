@@ -1,0 +1,17 @@
+data_type = "ablation_cache"
+cache_path = "/path/to/ablation_cache.bson"
+created_at = "2026-02-18T12:00:00Z"
+version = "1.0.0"
+records_key = "cache"
+
+[summary]
+n_skeletons = 25
+n_objectives = 30
+T = 20
+nbins = 5
+per_bin = 5
+
+[source_meta]
+data_type = "multi_run"
+data_path = "/path/to/multi_run_data.bson"
+data_meta_path = "/path/to/multi_run.meta.toml"

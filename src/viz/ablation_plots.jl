@@ -1,3 +1,35 @@
+"""
+    load_ablation_wholesale_from_metadata(meta_path::String)
+
+Load ablation wholesale data and its metadata from a metadata file.
+
+Reads the metadata TOML file, extracts the data path, loads the BSON file,
+and returns both the data structure and the parsed metadata dictionary.
+
+# Arguments
+- `meta_path::String`: Path to the `.meta.toml` metadata file
+
+# Returns
+- `data`: Data structure from the BSON file (containing .cache, .summaries, .meta)
+- `metadata::Dict`: Parsed metadata dictionary from the TOML file
+"""
+function load_ablation_wholesale_from_metadata(meta_path::String)
+    # Parse metadata file
+    metadata = TOML.parsefile(meta_path)
+    
+    # Extract data path (absolute path from metadata)
+    data_path = metadata["data_path"]
+    
+    # Load BSON data
+    bson_data = BSON.load(data_path)
+    
+    # Extract top-level object using key from metadata
+    top_level_key = Symbol(metadata["structure"]["top_level_key"])
+    data = bson_data[top_level_key]
+    
+    return data, metadata
+end
+
 function default_deg_height(yA_plot::Vector{<:Real}, yB_plot::Vector{<:Real}; ylims=nothing)
     # Prefer ylims if provided (best for ACC/ESS)
     if ylims !== nothing
@@ -141,32 +173,50 @@ function sweep_tick_labels_from_cache(cache::Dict, sw::Symbol, levels::Vector{In
     return labels
 end
 
-function pretty_xlabel(sw::Symbol)
-    sw == :K && return "K (number of Fourier features)"
-    sw == :freq_range && return "Frequency range width, 2Fₘₐₓ (units)"
-    sw == :amp_range && return "Amplitude maximum, Aₘₐₓ (units)"
+function pretty_xlabel(sw::Symbol, metadata::Dict)
+    sweep_str = string(sw)
+    sweeps = metadata["sweeps"]
+    if haskey(sweeps, sweep_str)
+        return sweeps[sweep_str]["xlabel"]
+    end
     return "Sweep level"
 end
 
-function pretty_title(sw::Symbol, metric::Symbol)
-    sweep_name = sw == :K ? "K Sweep" :
-                 sw == :freq_range ? "Frequency Range Sweep" :
-                 sw == :amp_range ? "Amplitude Range Sweep" : string(sw)
-    metric_name = metric == :ess ? "Effective Sample Size (ESS)" :
-                  metric == :rmse ? "Objective Reconstruction Error (RMSE)" :
-                  metric == :acc ? "Policy Match Accuracy" : string(metric)
-    return "$(sweep_name): $(metric_name)"
+function pretty_title(sw::Symbol, metric::Symbol, metadata::Dict)
+    sweep_str = string(sw)
+    metric_str = string(metric)
+    
+    # Get sweep description or construct name
+    sweeps = metadata["sweeps"]
+    sweep_desc = if haskey(sweeps, sweep_str)
+        sweeps[sweep_str]["description"]
+    else
+        string(sw)
+    end
+    
+    # Get metric ylabel (for consistency with plot)
+    metrics = metadata["metrics"]
+    metric_ylabel = if haskey(metrics, metric_str)
+        metrics[metric_str]["ylabel"]
+    else
+        string(metric)
+    end
+    
+    return "$(sweep_desc): $(metric_ylabel)"
 end
 
-function pretty_ylabel(metric::Symbol)
-    metric == :ess && return "ESS (particles)"
-    metric == :rmse && return "RMSE (objective value)"
-    metric == :acc && return "Accuracy (fraction)"
+function pretty_ylabel(metric::Symbol, metadata::Dict)
+    metric_str = string(metric)
+    metrics = metadata["metrics"]
+    if haskey(metrics, metric_str)
+        return metrics[metric_str]["ylabel"]
+    end
     return string(metric)
 end
 
 function grouped_bars(level_labels::Vector{String}, yA::Vector, yB::Vector;
                       title::String, xlabel::String, ylabel::String,
+                      method_A_label::String, method_B_label::String,
                       ylims=nothing)
 
     n = length(level_labels)
@@ -181,7 +231,7 @@ function grouped_bars(level_labels::Vector{String}, yA::Vector, yB::Vector;
     p = groupedbar(
         x, Y;
         bar_position = :dodge,      # side-by-side
-        label = METHOD_LABELS,
+        label = [method_A_label method_B_label],
         xticks = (x, level_labels),
         xrotation = 25,
         title = title,
@@ -208,6 +258,7 @@ function grouped_bars_with_degenerate_overlay(
     yA::Vector, yB::Vector,
     degA::AbstractVector{Bool}, degB::AbstractVector{Bool};
     title::String, xlabel::String, ylabel::String,
+    method_A_label::String, method_B_label::String,
     ylims=nothing,
     deg_height::Union{Nothing,Float64}=nothing
 )
@@ -223,7 +274,7 @@ function grouped_bars_with_degenerate_overlay(
     p = groupedbar(
         x, Y;
         bar_position=:dodge,
-        label=METHOD_LABELS,
+        label=[method_A_label method_B_label],
         xticks=(x, level_labels),
         xrotation=25,
         title=title,
@@ -268,10 +319,19 @@ function grouped_bars_with_degenerate_overlay(
     return p
 end
 
-function make_ablation_barplots(out)
-    sumdict = out.summaries
-    cache   = out.cache
+function make_ablation_barplots(meta_path::String)
+    # Load data and metadata
+    data, metadata = load_ablation_wholesale_from_metadata(meta_path)
+    
+    sumdict = data.summaries
+    cache   = data.cache
+    out_meta = data.meta
     plots   = Dict{Symbol,Dict{Symbol,Any}}()
+    
+    # Extract method labels from metadata
+    evals_struct = metadata["evals_structure"]
+    method_A_label = evals_struct["mode_A_label"]
+    method_B_label = evals_struct["mode_B_label"]
 
     for (sw, S) in sumdict
         levels = S.levels
@@ -284,24 +344,30 @@ function make_ablation_barplots(out)
 
         p_ess = grouped_bars_with_degenerate_overlay(
             tick_labels, S.essA, S.essB, degA_ess, degB_ess;
-            title=pretty_title(sw, :ess),
-            xlabel=pretty_xlabel(sw),
-            ylabel=pretty_ylabel(:ess),
-            ylims=(0, out.meta[:n_particles])
+            title=pretty_title(sw, :ess, metadata),
+            xlabel=pretty_xlabel(sw, metadata),
+            ylabel=pretty_ylabel(:ess, metadata),
+            method_A_label=method_A_label,
+            method_B_label=method_B_label,
+            ylims=(0, out_meta[:n_particles])
         )
 
         p_rmse = grouped_bars_with_degenerate_overlay(
             tick_labels, S.rmseA, S.rmseB, degA_rmse, degB_rmse;
-            title=pretty_title(sw, :rmse),
-            xlabel=pretty_xlabel(sw),
-            ylabel=pretty_ylabel(:rmse)
+            title=pretty_title(sw, :rmse, metadata),
+            xlabel=pretty_xlabel(sw, metadata),
+            ylabel=pretty_ylabel(:rmse, metadata),
+            method_A_label=method_A_label,
+            method_B_label=method_B_label
         )
 
         p_acc = grouped_bars_with_degenerate_overlay(
             tick_labels, S.accA, S.accB, degA_acc, degB_acc;
-            title=pretty_title(sw, :acc),
-            xlabel=pretty_xlabel(sw),
-            ylabel=pretty_ylabel(:acc),
+            title=pretty_title(sw, :acc, metadata),
+            xlabel=pretty_xlabel(sw, metadata),
+            ylabel=pretty_ylabel(:acc, metadata),
+            method_A_label=method_A_label,
+            method_B_label=method_B_label,
             ylims=(0, 1)
         )
 
