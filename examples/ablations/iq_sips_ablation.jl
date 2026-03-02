@@ -5,6 +5,8 @@ using Arrodes
 using Random
 using BSON
 using Dates
+using Plots
+using ArgCheck
 
 # Output directory for cache and plots (data subfolder)
 # Also used as the default location for loading caches when mode == :load
@@ -14,7 +16,7 @@ DATA_DIR = joinpath(examples_dir, "data")
 # Path to a BSON file containing runs (input runpacks). If running in :generate
 # mode this must point to your runpack file. When mode == :load this argument is
 # ignored and the script will use the most-recent cache in the data folder by default.
-const DEFAULT_RUNS_META = joinpath(DATA_DIR, "50_15_10_3_multi_trace_run.meta.toml")
+const DEFAULT_RUNS_META = joinpath(DATA_DIR, "30_15_10_3_multi_trace_run.meta.toml")
 
 # find most recent cache metadata file in DATA_DIR matching our naming convention
 function latest_cache_file(datadir::AbstractString)
@@ -65,7 +67,7 @@ function main(;
         end
         println(
             "Going to generate cache - metadata will be saved at: ",
-            joinpath(DATA_DIR, cache_metadata_basename),
+            joinpath(DATA_DIR, cache_metadata_filename),
         )
     elseif mode == :load
         if isnothing(cache_metadata_filename)
@@ -106,6 +108,75 @@ function main(;
     println("Wholesale metadata saved as: ", wholesale_meta_path)
     
     return out
+end
+
+"""
+    make_and_save_wholesale_plots(wholesale_meta_path::AbstractString; save_dir::AbstractString=DATA_DIR)
+
+Load the wholesale ablation data and its metadata from a .meta.toml file, then produce a set of
+diagnostic plots using the Visualizations submodule and save them to `save_dir`.
+
+# Arguments
+- `wholesale_meta_path`: Path to the `.meta.toml` metadata file for the wholesale output
+- `save_dir`: Directory where a subfolder with plots will be created (default: DATA_DIR)
+
+The subfolder is named after the metadata file (without the `.meta.toml` extension) and contains
+all generated plots organized by type.
+
+Returns a Dict of produced plots / filenames.
+"""
+function make_and_save_wholesale_plots(wholesale_meta_path::AbstractString; save_dir::AbstractString=DATA_DIR)
+    @argcheck endswith(wholesale_meta_path, ".meta.toml") "wholesale_meta_path must end with .meta.toml; got: $wholesale_meta_path"
+    
+    # Extract folder name from metadata filename (strip .meta.toml)
+    meta_basename = basename(wholesale_meta_path)
+    folder_name = meta_basename[1:end-10]  # Remove ".meta.toml"
+    plot_dir = joinpath(save_dir, folder_name)
+    mkpath(plot_dir)
+
+    # Load wholesale data from metadata file
+    out, metadata = load_ablation_wholesale_from_metadata(wholesale_meta_path)
+
+    results = Dict{Symbol,Any}()
+
+    # 1) Final inference figures (two summary plots)
+    try
+        figs = make_final_inference_figures(out)
+        p1 = figs.p1; p2 = figs.p2
+        f1 = joinpath(plot_dir, "final_inference_p1.png")
+        f2 = joinpath(plot_dir, "final_inference_p2.png")
+        savefig(p1, f1)
+        savefig(p2, f2)
+        results[:final_inference] = (p1=f1, p2=f2, meta=(best_iqsips=figs.best_iqsips, best_both=figs.best_both))
+    catch err
+        @warn "make_final_inference_figures failed" error=err
+    end
+
+    # 2) All objectives pages (paginated); save into subdir
+    try
+        obj_dir = joinpath(plot_dir, "objectives_pages")
+        files = plot_all_objectives_from_cache(out.cache; savepath=obj_dir)
+        results[:all_objectives_pages] = files
+    catch err
+        @warn "plot_all_objectives_from_cache failed" error=err
+    end
+
+    # 3) Ablation barplots
+    barplots = make_ablation_barplots(wholesale_meta_path)
+    ap_dir = joinpath(plot_dir, "ablation_barplots")
+    mkpath(ap_dir)
+    saved = Dict{Symbol,Dict{Symbol,String}}()
+    for (sw, dict) in barplots
+        saved[sw] = Dict{Symbol,String}()
+        for (metric, p) in dict
+            fname = joinpath(ap_dir, "ablation_$(sw)_$(metric).png")
+            savefig(p, fname)
+            saved[sw][metric] = fname
+        end
+    end
+    results[:ablation_barplots] = saved
+
+    return results
 end
 
 # main()

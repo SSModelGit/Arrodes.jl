@@ -1,0 +1,17 @@
+data_type = "ablation_cache"
+cache_path = "/home/shashank/cbase/corespace/jbase/Arrodes.jl/examples/ablations/data/ablation_cache_20260301T2009.bson"
+created_at = "2026-03-01T20:12:49Z"
+version = "1.0.0"
+records_key = "cache"
+
+[summary]
+n_skeletons = 25
+n_objectives = 30
+T = 20
+nbins = 5
+per_bin = 5
+
+[source_meta]
+data_type = "multi_run"
+data_path = "/home/shashank/cbase/corespace/jbase/MuKumari.jl/test/expert_data/30_15_10_3_multi_trace_run.bson"
+data_meta_path = "/home/shashank/cbase/corespace/jbase/MuKumari.jl/test/expert_data/30_15_10_3_multi_trace_run.meta.toml"

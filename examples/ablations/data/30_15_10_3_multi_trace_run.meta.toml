@@ -1,0 +1,29 @@
+schema_version = 1
+data_path = "/home/shashank/cbase/corespace/jbase/MuKumari.jl/test/expert_data/30_15_10_3_multi_trace_run.bson"
+format = "bson"
+data_type = "multi_run"
+created_at = "2026-02-22T16:34:44"
+created_by = "generated"
+notes = "Auto-generated multi-run metadata"
+
+# top-level multi-run info
+n_agents = 3
+agent_names = ["ag1","ag2","ag3"]
+runs_per_agent = 10
+run_index_key = "ind_exps"
+agent_key_pattern = "ag%s"
+
+[loader]
+run_container_key = "runs"
+agent_entry_key = ""
+full_key = "full_data"
+anon_key = "anon_data"
+expected_keys = ["s","sp","a","r"]
+unpack_strategy = "runs-array"
+
+[state]
+state_field_sizes = [2, 2, 12, 1]
+state_field_names = ["loc", "vel", "obcs", "time"]
+keep_state_fields = [true, true, true, false, true]
+anonize_first_rows = 2
+auto_clean = true
