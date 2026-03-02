@@ -18,9 +18,9 @@ function reconstruct_mdp_from_cache(rec::Dict, muenv_spec::MuEnvSpec)
     cfg = rec[:cfg]
     key = rec[:key]
 
-    bank = decode_fourier_key(key, cfg)                 # returns bank with fx, fy, A, ϕ
-    field = make_fourier_scalar_field(bank; scaleQ = true)
-    obj = make_pomdp_objective_from_field(field)
+    bank = Priors.decode_fourier_key(key, cfg)                 # returns bank with fx, fy, A, ϕ
+    field = Priors.make_fourier_scalar_field(bank; scaleQ = true)
+    obj = Priors.make_pomdp_objective_from_field(field)
 
     menv = Utils.build_shared_menv(muenv_spec)
 
@@ -69,11 +69,11 @@ function build_ablation_objectives(;
 
     for i in 1:levels
         K = i  # 1..10
-        key = sample_fourier_key(cfgK; K_override = K, rng = rng)
+        key = Priors.sample_fourier_key(cfgK; K_override = K, rng = rng)
         # decode indices -> actual values (fx, fy, A, ϕ)
-        ff = decode_fourier_key(key, cfgK)
-        field = make_fourier_scalar_field(ff; scaleQ = true)
-        obj = make_pomdp_objective_from_field(field)
+        ff = Priors.decode_fourier_key(key, cfgK)
+        field = Priors.make_fourier_scalar_field(ff; scaleQ = true)
+        obj = Priors.make_pomdp_objective_from_field(field)
         push!(
             out,
             (
@@ -113,10 +113,10 @@ function build_ablation_objectives(;
             Amax_i = cfgF_base.Amax_i,
             P = cfgF_base.P,
         )
-        key = sample_fourier_key(cfgF; K_override = 2, rng = rng)
-        ff = decode_fourier_key(key, cfgF)
-        field = make_fourier_scalar_field(ff; scaleQ = true)
-        obj = make_pomdp_objective_from_field(field)
+        key = Priors.sample_fourier_key(cfgF; K_override = 2, rng = rng)
+        ff = Priors.decode_fourier_key(key, cfgF)
+        field = Priors.make_fourier_scalar_field(ff; scaleQ = true)
+        obj = Priors.make_pomdp_objective_from_field(field)
         push!(
             out,
             (
@@ -155,10 +155,10 @@ function build_ablation_objectives(;
             Amax_i = Amax,
             P = cfgA_base.P,
         )
-        key = sample_fourier_key(cfgA; K_override = 2, rng = rng)
-        ff = decode_fourier_key(key, cfgA)
-        field = make_fourier_scalar_field(ff; scaleQ = true)
-        obj = make_pomdp_objective_from_field(field)
+        key = Priors.sample_fourier_key(cfgA; K_override = 2, rng = rng)
+        ff = Priors.decode_fourier_key(key, cfgA)
+        field = Priors.make_fourier_scalar_field(ff; scaleQ = true)
+        obj = Priors.make_pomdp_objective_from_field(field)
         push!(
             out,
             (
@@ -573,8 +573,8 @@ function eval_ablation_from_cache(
             badB ? (acc = NaN,) :
             policy_match_acc(pfB, π_dist, agent_params, state_dataA, obs_aidxA)
 
-        keyA, probA = badA ? (nothing, NaN) : top_key(pfA, π_dist)
-        keyB, probB = badB ? (nothing, NaN) : top_key(pfB, π_dist)
+        keyA, probA = badA ? (nothing, NaN) : RL.top_key(pfA, π_dist)
+        keyB, probB = badB ? (nothing, NaN) : RL.top_key(pfB, π_dist)
 
 
         evals[i] = (
@@ -626,7 +626,7 @@ function run_ablation_suite(
     nbins::Int = 5,
     per_bin::Int = 5,
     rng = Random.default_rng(),
-    shared_menv = build_shared_menv(),
+    shared_menv = Utils.build_shared_menv(),
     n_particles::Int = 50,
     ess_thresh::Float64 = 0.7,
     refine_every::Int = 5,
@@ -637,7 +637,7 @@ function run_ablation_suite(
 )
 
     packs_all, skeletons, bin_info =
-        select_skeleton_mdps(meta_or_path; nbins = nbins, per_bin = per_bin, rng = rng)
+        Utils.select_skeleton_mdps(meta_or_path; nbins = nbins, per_bin = per_bin, rng = rng)
 
     objectives = build_ablation_objectives(; rng = rng, levels = 10)
     mdprecs =
@@ -819,7 +819,7 @@ function write_wholesale_metadata(
 
     # Build metadata structure
     meta_content = """
-    schema_version = $(version)
+    schema_version = "$(version)"
     data_type = "ablation_wholesale"
     data_path = "$(wholesale_path)"
     format = "bson"

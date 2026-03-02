@@ -5,6 +5,8 @@ import GeoInterface as GI
 using TOML, BSON
 
 using Plots
+using StatsPlots
+using Measures
 using MuKumari
 using Crux
 using Flux

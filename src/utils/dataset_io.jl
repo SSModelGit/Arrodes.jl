@@ -145,64 +145,106 @@ function write_cache_metadata(
     return meta_path
 end
 
-function load_runpacks(meta_or_path::Union{AbstractString, Dict{String, Any}})
-    # Resolve metadata (parse TOML once if a path was provided)
-    meta =
-        isa(meta_or_path, AbstractString) ? read_data_metadata(meta_or_path) : meta_or_path
+# Normalize and ensure sensible defaults for multi-run metadata loader fields
+function _ensure_multi_run_meta!(meta::Dict{String,Any})
+    loader = get!(meta, "loader") do
+        Dict{String,Any}()
+    end
+    # prefer data container under `data` by default (matches MuKumari convention)
+    get!(loader, "run_container_key") do
+        "data"
+    end
+    # default agent per-run list key
+    get!(loader, "run_index_key") do
+        "ind_exps"
+    end
+    # default names used when unpacking dict-style entries
+    get!(loader, "full_key") do
+        "full_data"
+    end
+    get!(loader, "anon_key") do
+        "anon_data"
+    end
+    meta["loader"] = loader
+    return meta
+end
 
-    # This loader is explicitly for multi-run datasets
+# Try lookup with String then Symbol keys
+_get_k(dict::AbstractDict, k::AbstractString) = haskey(dict, k) ? dict[k] : (haskey(dict, Symbol(k)) ? dict[Symbol(k)] : nothing)
+
+# Expect and parse the strict MuKumari multi-run layout described by the user.
+function load_runpacks(meta_or_path::Union{AbstractString, Dict{String, Any}})
+    # Resolve metadata (path or dict)
+    meta = isa(meta_or_path, AbstractString) ? read_data_metadata(meta_or_path) : meta_or_path
     @argcheck haskey(meta, "data_type") && meta["data_type"] == "multi_run" "load_runpacks expects metadata for a multi_run dataset; got: $(get(meta, "data_type", "<missing>"))"
 
-    # Load BSON from the data_path specified in metadata
+    # Require explicit data_path in metadata
+    @argcheck haskey(meta, "data_path") "metadata must contain a data_path pointing to the BSON file"
+
+    # State-cleaner metadata required
+    state_meta = get(meta, "state", get(meta, "cleaner", nothing))
+    @argcheck state_meta !== nothing "Missing state metadata in multi-run metadata (expected [state] section)."
+    s_sizes = state_meta["state_field_sizes"]
+    s_keep = state_meta["keep_state_fields"]
+
+    # Load BSON and expect a `:data` container with the layout described by MuKumari
     bson_path = meta["data_path"]
     raw = BSON.load(bson_path)
 
-    # locate run container according to metadata (fallback to legacy keys)
-    rc_key = get(get(meta, "loader", Dict{String, Any}()), "run_container_key", "runs")
-    runs =
-        haskey(raw, Symbol(rc_key)) ? raw[Symbol(rc_key)] :
-        haskey(raw, rc_key) ? raw[rc_key] :
-        (haskey(raw, :runs) ? raw[:runs] : (haskey(raw, "runs") ? raw["runs"] : [raw]))
+    # Strict: expect data container under :data (Symbol) or "data" (String)
+    data_container = haskey(raw, :data) ? raw[:data] : (haskey(raw, "data") ? raw["data"] : nothing)
+    @argcheck data_container !== nothing "BSON must contain a top-level `:data` container holding kworld and per-agent entries"
 
-    packs = RunPack[]
-    for (rid, r0) in enumerate(runs)
-        run = _normalize_run_payload(r0)
+    # kworld is expected inside data_container[:kworld] (or string key)
+    kworld = haskey(data_container, :kworld) ? data_container[:kworld] : (haskey(data_container, "kworld") ? data_container["kworld"] : nothing)
+    @argcheck kworld !== nothing "Could not find :kworld inside the data container"
 
-        kworld =
-            haskey(run, "kworld") ? run["kworld"] :
-            haskey(run, :kworld) ? run[:kworld] : (@argcheck false "No kworld in run $rid")
-
-        ann = kworld_annotations(kworld)
-
-        # determine agent keys: prefer explicit list in metadata, else fall back to legacy prefix detector
-        agent_keys =
-            haskey(meta, "agent_names") ? meta["agent_names"] :
-            sort([k for k in keys(run) if k isa String && startswith(k, "ag")])
-
-        # run index key (inside each agent entry) -- default is ind_exps for legacy compat
-        run_index_key =
-            get(get(meta, "loader", Dict{String, Any}()), "run_index_key", "ind_exps")
-
-        # state-cleaner metadata (required for multi-run path)
-        state_meta = get(meta, "state", get(meta, "cleaner", nothing))
-        @argcheck state_meta !== nothing "Missing state metadata in multi-run metadata (expected [state] section, or [cleaner] section for legacy compatibility)."
-        s_sizes = state_meta["state_field_sizes"]
-        s_keep = state_meta["keep_state_fields"]
-
-        for agent in agent_keys
-            expdict = run[agent]  # Dict(:ind_exps=>..., :total_exp=>...)
-            insts = expdict[run_index_key]
-
-            for (k, inst) in enumerate(insts)
-                full_buf, anon_buf = inst
-                full_buf = data_cleaner(full_buf, s_sizes, s_keep)
-                anon_buf = data_cleaner(anon_buf, s_sizes, s_keep)
-                name = agent * "_" * string(k)
-                mdp = kworld.inhabitants[name]  # matches generator naming
-                push!(packs, RunPack(rid, agent, k, mdp, full_buf, anon_buf, ann))
+    # Determine agent names: prefer explicit metadata list else detect Symbol keys like :ag1
+    agent_names = haskey(meta, "agent_names") ? meta["agent_names"] : begin
+        ks = String[]
+        for k in keys(data_container)
+            if k === :kworld || k === "kworld" || k == :total || k == "total"
+                continue
+            end
+            sname = isa(k, Symbol) ? string(k) : isa(k, AbstractString) ? k : nothing
+            if sname !== nothing && startswith(sname, "ag")
+                push!(ks, sname)
             end
         end
+        sort(unique(ks))
     end
+
+    packs = RunPack[]
+
+    # For the MuKumari multi-run layout, each agent entry contains :ind_exps which is an array of (full_buf, anon_buf)
+    for agent in agent_names
+        # access agent entry; prefer Symbol key but accept String
+        ak_sym = Symbol(agent)
+        expdict = haskey(data_container, ak_sym) ? data_container[ak_sym] : (haskey(data_container, agent) ? data_container[agent] : nothing)
+        @argcheck expdict !== nothing "Missing agent entry $(agent) in data container"
+
+        # retrieve per-run instances under :ind_exps (strict)
+        insts = haskey(expdict, :ind_exps) ? expdict[:ind_exps] : (haskey(expdict, "ind_exps") ? expdict["ind_exps"] : nothing)
+        @argcheck insts !== nothing "Agent entry $(agent) must contain :ind_exps (array of (full_buf, anon_buf) tuples)"
+
+        for (k, inst) in enumerate(insts)
+            @argcheck isa(inst, Tuple) && length(inst) == 2 "Each entry of :ind_exps must be a Tuple (full_buf, anon_buf)"
+            full_buf, anon_buf = inst
+
+            # Clean buffers according to metadata
+            full_buf = data_cleaner(full_buf, s_sizes, s_keep)
+            anon_buf = data_cleaner(anon_buf, s_sizes, s_keep)
+
+            # mdp naming convention: agent_k (e.g. "ag1_3")
+            name = string(agent) * "_" * string(k)
+            @argcheck haskey(kworld.inhabitants, name) "mdp with name $(name) not found in kworld.inhabitants"
+            mdp = kworld.inhabitants[name]
+
+            # Use run id = k (per-agent run index) for strict loader
+            push!(packs, RunPack(k, agent, k, mdp, full_buf, anon_buf, kworld_annotations(kworld)))
+        end
+    end
+
     return packs
 end
 

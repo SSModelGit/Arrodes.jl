@@ -23,20 +23,20 @@ function plot_top_objective_with_trajectories(pf_state, π_dist::ScoreΠDist, ag
                                              show_predicted::Bool=true,
                                              title_prefix::String="Top objective")
 
-    key, prob = top_key(pf_state, π_dist)
+    key, prob = RL.top_key(pf_state, π_dist)
 
     # Build inferred scalar field from decoded params
-    ff = decode_fourier_key(key, π_dist.fourier_cfg)
-    field = make_fourier_scalar_field(ff; scaleQ=true)
+    ff = Priors.decode_fourier_key(key, π_dist.fourier_cfg)
+    field = Priors.make_fourier_scalar_field(ff; scaleQ=true)
 
     # Need an mdp for plotting bounds (use cached/ensured proposal mdp)
-    mdp_hat = ensure_mdp!(π_dist, key)
-    xs_grid, ys_grid = _grid_from_mdp(mdp_hat; gridsize=gridsize)
+    mdp_hat = RL.ensure_mdp!(π_dist, key)
+    xs_grid, ys_grid = Utils._grid_from_mdp(mdp_hat; gridsize=gridsize)
 
-    Z = objective_grid_from_field(field, xs_grid, ys_grid)
+    Z = Priors.objective_grid_from_field(field, xs_grid, ys_grid)
 
     # Observed trajectory
-    obs_x, obs_y = xy_path_from_state_matrix(observed_state_matrix; xy_rows=xy_rows)
+    obs_x, obs_y = Utils.xy_path_from_state_matrix(observed_state_matrix; xy_rows=xy_rows)
     T = length(obs_x)
 
     p = heatmap(xs_grid, ys_grid, Z;
@@ -49,7 +49,7 @@ function plot_top_objective_with_trajectories(pf_state, π_dist::ScoreΠDist, ag
 
     if show_predicted
         start_state = agent_params[:start_state]
-        pred_x, pred_y, _ = rollout_greedy_policy(π_dist, key; start_state=start_state, T=T)
+        pred_x, pred_y, _ = RL.rollout_greedy_policy(π_dist, key; start_state=start_state, T=T)
         plot!(p, pred_x, pred_y; label="predicted (greedy)", linewidth=3, linestyle=:dash)
     end
 
@@ -79,16 +79,16 @@ function plot_objective_side_by_side(pf_state, π_dist::ScoreΠDist;
                                     title_left::String="Inferred top objective",
                                     title_right::String="Observed MDP objective")
 
-    key, prob = top_key(pf_state, π_dist)
+    key, prob = RL.top_key(pf_state, π_dist)
 
-    ff = decode_fourier_key(key, π_dist.fourier_cfg)
-    field = make_fourier_scalar_field(ff; scaleQ=true)
+    ff = Priors.decode_fourier_key(key, π_dist.fourier_cfg)
+    field = Priors.make_fourier_scalar_field(ff; scaleQ=true)
 
     # Use observed mdp bounds for both to make comparison apples-to-apples
-    xs_grid, ys_grid = _grid_from_mdp(observed_mdp; gridsize=gridsize)
+    xs_grid, ys_grid = Utils._grid_from_mdp(observed_mdp; gridsize=gridsize)
 
-    Z_inf = objective_grid_from_field(field, xs_grid, ys_grid)
-    Z_obs = objective_grid_from_mdp(observed_mdp, xs_grid, ys_grid)
+    Z_inf = Priors.objective_grid_from_field(field, xs_grid, ys_grid)
+    Z_obs = Priors.objective_grid_from_mdp(observed_mdp, xs_grid, ys_grid)
 
     p1 = heatmap(xs_grid, ys_grid, Z_inf;
                  aspect_ratio=1,
@@ -126,12 +126,12 @@ function plot_true_objective_vs_iqsips_rollout(cache::Dict, e;
     mdp, agent_params = reconstruct_mdp_from_cache(rec, muenv_spec)
 
     # Grid + true objective
-    xs, ys = _grid_from_mdp(mdp; gridsize=gridsize)
-    Z_true = objective_grid_from_mdp(mdp, xs, ys)
+    xs, ys = Utils._grid_from_mdp(mdp; gridsize=gridsize)
+    Z_true = Priors.objective_grid_from_mdp(mdp, xs, ys)
 
     # Observed trajectory from cached data
     Sobs = rec[:full_data][:s]
-    obs_x, obs_y = xy_path_from_state_matrix(Sobs; xy_rows=xy_rows)
+    obs_x, obs_y = Utils.xy_path_from_state_matrix(Sobs; xy_rows=xy_rows)
     T = length(obs_x)
 
     # IQ-SIPS inferred rollout (requires top_key)
@@ -145,11 +145,11 @@ function plot_true_objective_vs_iqsips_rollout(cache::Dict, e;
 
     # -------------------- FIX: ensure MDP exists for this key --------------------
     cfgB = rec[:cfg]  # FourierDiscreteCfg used during ablation
-    ffB  = decode_fourier_key(keyB, cfgB)
-    ensure_mdp!(π_dist, keyB, ffB, agent_params)   # populates n_propmdp_list[keyB]
+    ffB  = Priors.decode_fourier_key(keyB, cfgB)
+    RL.ensure_mdp!(π_dist, keyB, ffB, agent_params)   # populates n_propmdp_list[keyB]
     # ---------------------------------------------------------------------------
 
-    pred_x, pred_y, _ = rollout_greedy_policy(π_dist, keyB; start_state=agent_params[:start_state], T=10)
+    pred_x, pred_y, _ = RL.rollout_greedy_policy(π_dist, keyB; start_state=agent_params[:start_state], T=10)
 
     p = heatmap(xs, ys, Z_true;
         aspect_ratio=1,
@@ -183,10 +183,10 @@ function plot_objective_triptych(cache::Dict, e;
 
     mdp, _ = reconstruct_mdp_from_cache(rec, muenv_spec)
 
-    xs, ys = _grid_from_mdp(mdp; gridsize=gridsize)
+    xs, ys = Utils._grid_from_mdp(mdp; gridsize=gridsize)
 
     # True objective from reconstructed mdp
-    Z_true = objective_grid_from_mdp(mdp, xs, ys)
+    Z_true = Priors.objective_grid_from_mdp(mdp, xs, ys)
 
     # Inferred objectives from stored keys
     cfg = rec[:cfg]   # FourierDiscreteCfg used to decode keys
@@ -196,8 +196,8 @@ function plot_objective_triptych(cache::Dict, e;
     probA = get(e.A, :top_prob, NaN)
     probB = get(e.B, :top_prob, NaN)
 
-    Z_A = objective_grid_from_key(keyA, cfg, xs, ys)
-    Z_B = objective_grid_from_key(keyB, cfg, xs, ys)
+    Z_A = Priors.objective_grid_from_key(keyA, cfg, xs, ys)
+    Z_B = Priors.objective_grid_from_key(keyB, cfg, xs, ys)
 
     p_true = heatmap(xs, ys, Z_true;
         aspect_ratio=1, dpi=220,
@@ -281,10 +281,10 @@ function plot_all_objectives_from_cache(cache::Dict; gridsize::Int=140, max_per_
             rec = records[rec_i]
             # reconstruct mdp for bounds
             mdp, _ = reconstruct_mdp_from_cache(rec, cache[:muenv_spec])
-            xs, ys = _grid_from_mdp(mdp; gridsize=gridsize)
+            xs, ys = Utils._grid_from_mdp(mdp; gridsize=gridsize)
 
             # compute objective grid using stored key+cfg helper
-            Z = objective_grid_from_key(rec[:key], rec[:cfg], xs, ys)
+            Z = Priors.objective_grid_from_key(rec[:key], rec[:cfg], xs, ys)
 
             tit = "id=$(rec[:id]) $(rec[:sweep])=$(rec[:level])"
             heatmap!(p, xs, ys, Z; subplot=ii, aspect_ratio=1, title=tit, xlabel="x", ylabel="y", colorbar_title="obj", c=cmap)
@@ -372,7 +372,7 @@ function compare_iql_vs_true_policy(cache::Dict, e; gridsize::Int=80, solver_typ
     end
 
     # Grid
-    xs, ys = _grid_from_mdp(mdp; gridsize=gridsize)
+    xs, ys = Utils._grid_from_mdp(mdp; gridsize=gridsize)
     nx = length(xs); ny = length(ys)
 
     U_true = zeros(Float64, ny, nx)

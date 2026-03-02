@@ -13,7 +13,7 @@ export FourierDiscreteCfg, ScoreΠDist, MuEnvSpec, METHOD_LABELS, RunPack, actio
 
     # amplitude grid
     ΔA::Float64 = 0.1
-    Amax_i::Int = 1              # bins in 0:Amax_i
+    Amax_i::Int = 3               # bins in 0:Amax_i
 
     # phase grid
     P::Int = 32                   # bins in 0:P-1

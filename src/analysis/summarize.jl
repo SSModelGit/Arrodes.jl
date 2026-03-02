@@ -181,7 +181,7 @@ function summarize_ablation(evals)
             [begin
                 vals = [f(e) for e in Es if e.level==lv]
                 vals = filter(x -> !(ismissing(x) || (x isa Real && isnan(x))), vals)
-                nanmean(vals)
+                Utils.nanmean(vals)
              end for lv in levels]
         end
 

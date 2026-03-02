@@ -97,13 +97,16 @@ geometry, noise, discounting, etc., but a different objective function.
 
 The returned dictionary is compatible with `build_kagent_pomdp(agent_params, obj)`.
 """
-function agent_params_from_mdp(mdp::KAgentPOMDP)
+function agent_params_from_mdp(mdp::KAgentPOMDP; muenv_spec::Union{Nothing, MuEnvSpec}=nothing)
+    # Determine menv: use provided spec to build a fresh MuEnv, else fall back to mdp.menv
+    menv_local = isnothing(muenv_spec) ? build_shared_menv(MuEnvSpec()) : build_shared_menv(muenv_spec)
+
     return Dict(
         # --- required ---
         :start        => mdp.start,
-        :start_state  => KAgentState(mdp.start, [predict_env(menv, mdp.start)], Matrix[]),
+        :start_state  => KAgentState(mdp.start, [predict_env(menv_local, mdp.start)], Matrix[]),
         :dimensions   => mdp.dimensions,
-        :menv         => menv,
+        :menv         => menv_local,
 
         # --- dynamics / noise ---
         :agent_width  => mdp.width,
