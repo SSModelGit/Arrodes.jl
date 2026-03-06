@@ -176,6 +176,52 @@ function make_and_save_wholesale_plots(wholesale_meta_path::AbstractString; save
     end
     results[:ablation_barplots] = saved
 
+    # 4) IQL vs True Policy comparisons for select scenarios
+    iql_dir = joinpath(plot_dir, "iql_vs_true_policy")
+    mkpath(iql_dir)
+    
+    # Select a few representative evals: one from each sweep type
+    # Strategy: pick eval with best accuracy for each sweep
+    evals_by_sweep = Dict{Symbol, Vector{Any}}()
+    for e in out.evals
+        sw = e.sweep
+        if !haskey(evals_by_sweep, sw)
+            evals_by_sweep[sw] = []
+        end
+        push!(evals_by_sweep[sw], e)
+    end
+    
+    iql_files = String[]
+    for (sw, evals_list) in evals_by_sweep
+        # Pick the eval with best accuracy (fewest degeneracies, highest acc)
+        best_e = nothing
+        best_acc = -Inf
+        
+        for e in evals_list
+            accB = get(get(e.B, :pol, (acc=NaN,)), :acc, NaN)
+            if !isnan(accB) && accB > best_acc
+                best_acc = accB
+                best_e = e
+            end
+        end
+        
+        # If we found a good eval, generate the comparison plot
+        if best_e !== nothing
+            fname = compare_iql_vs_true_policy(
+                out.cache, best_e;
+                gridsize=80,
+                solver_type=:mcts,
+                solver_params=[:dpw, 1000, 10.0],
+                show_quiver=true,
+                savepath=iql_dir
+            )
+            push!(iql_files, fname)
+            @info "Generated IQL vs True policy plot for sweep=$sw: $fname"
+        end
+    end
+    
+    results[:iql_vs_true_policy] = iql_files
+
     return results
 end
 

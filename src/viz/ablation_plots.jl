@@ -214,45 +214,6 @@ function pretty_ylabel(metric::Symbol, metadata::Dict)
     return string(metric)
 end
 
-function grouped_bars(level_labels::Vector{String}, yA::Vector, yB::Vector;
-                      title::String, xlabel::String, ylabel::String,
-                      method_A_label::String, method_B_label::String,
-                      ylims=nothing)
-
-    n = length(level_labels)
-    @assert length(yA) == n && length(yB) == n
-
-    # IMPORTANT: numeric x; labels supplied via xticks
-    x = 1:n
-
-    # Y must be n×2 where each column is a method (A, B)
-    Y = hcat(yA, yB)
-
-    p = groupedbar(
-        x, Y;
-        bar_position = :dodge,      # side-by-side
-        label = [method_A_label method_B_label],
-        xticks = (x, level_labels),
-        xrotation = 25,
-        title = title,
-        xlabel = xlabel,
-        ylabel = ylabel,
-        size = (950, 560),
-        dpi = 220,
-        framestyle = :box,
-        gridalpha = 0.15,
-        legend = :topright,
-        left_margin = 12mm, right_margin = 6mm,
-        top_margin = 10mm, bottom_margin = 12mm
-    )
-
-    if ylims !== nothing
-        ylims!(p, ylims)
-    end
-
-    return p
-end
-
 function grouped_bars_with_degenerate_overlay(
     level_labels::Vector{String},
     yA::Vector, yB::Vector,

@@ -1,110 +1,3 @@
-################
-### Plotting ###
-################
-
-"""
-    plot_top_objective_with_trajectories(pf_state, π_dist, agent_params;
-                                         observed_state_matrix,
-                                         gridsize=140,
-                                         xy_rows=(1,2),
-                                         show_predicted=true,
-                                         title_prefix="Top objective")
-
-Heatmap of the inferred top objective function, overlaying:
-- observed agent trajectory (from data)
-- predicted rollout under the inferred objective's MDP+policy (greedy)
-
-Returns a Plots.jl plot object.
-"""
-function plot_top_objective_with_trajectories(pf_state, π_dist::ScoreΠDist, agent_params::Dict;
-                                             observed_state_matrix::AbstractMatrix,
-                                             gridsize::Int=140,
-                                             xy_rows::Tuple{Int,Int}=(1,2),
-                                             show_predicted::Bool=true,
-                                             title_prefix::String="Top objective")
-
-    key, prob = RL.top_key(pf_state, π_dist)
-
-    # Build inferred scalar field from decoded params
-    ff = Priors.decode_fourier_key(key, π_dist.fourier_cfg)
-    field = Priors.make_fourier_scalar_field(ff; scaleQ=true)
-
-    # Need an mdp for plotting bounds (use cached/ensured proposal mdp)
-    mdp_hat = RL.ensure_mdp!(π_dist, key)
-    xs_grid, ys_grid = Utils._grid_from_mdp(mdp_hat; gridsize=gridsize)
-
-    Z = Priors.objective_grid_from_field(field, xs_grid, ys_grid)
-
-    # Observed trajectory
-    obs_x, obs_y = Utils.xy_path_from_state_matrix(observed_state_matrix; xy_rows=xy_rows)
-    T = length(obs_x)
-
-    p = heatmap(xs_grid, ys_grid, Z;
-               aspect_ratio=1,
-               title="$(title_prefix) (posterior ≈ $(prob))",
-               xlabel="x", ylabel="y",
-               colorbar_title="objective")
-
-    plot!(p, obs_x, obs_y; label="observed", linewidth=3)
-
-    if show_predicted
-        start_state = agent_params[:start_state]
-        pred_x, pred_y, _ = RL.rollout_greedy_policy(π_dist, key; start_state=start_state, T=T)
-        plot!(p, pred_x, pred_y; label="predicted (greedy)", linewidth=3, linestyle=:dash)
-    end
-
-    # Mark start/end for quick visual sanity
-    scatter!(p, [obs_x[1]], [obs_y[1]]; label="obs start", markersize=6)
-    scatter!(p, [obs_x[end]], [obs_y[end]]; label="obs end", markersize=6)
-
-    return p
-end
-
-"""
-    plot_objective_side_by_side(pf_state, π_dist;
-                                observed_mdp,
-                                gridsize=140,
-                                title_left="Inferred top objective",
-                                title_right="Observed MDP objective")
-
-Side-by-side heatmaps:
-- inferred top objective field (from Fourier features)
-- observed MDP objective (mdp.obj(s)[1])
-
-Returns a Plots.jl plot object with layout (1,2).
-"""
-function plot_objective_side_by_side(pf_state, π_dist::ScoreΠDist;
-                                    observed_mdp::KAgentPOMDP,
-                                    gridsize::Int=140,
-                                    title_left::String="Inferred top objective",
-                                    title_right::String="Observed MDP objective")
-
-    key, prob = RL.top_key(pf_state, π_dist)
-
-    ff = Priors.decode_fourier_key(key, π_dist.fourier_cfg)
-    field = Priors.make_fourier_scalar_field(ff; scaleQ=true)
-
-    # Use observed mdp bounds for both to make comparison apples-to-apples
-    xs_grid, ys_grid = Utils._grid_from_mdp(observed_mdp; gridsize=gridsize)
-
-    Z_inf = Priors.objective_grid_from_field(field, xs_grid, ys_grid)
-    Z_obs = Priors.objective_grid_from_mdp(observed_mdp, xs_grid, ys_grid)
-
-    p1 = heatmap(xs_grid, ys_grid, Z_inf;
-                 aspect_ratio=1,
-                 title="$(title_left)\n(posterior ≈ $(prob))",
-                 xlabel="x", ylabel="y",
-                 colorbar_title="objective")
-
-    p2 = heatmap(xs_grid, ys_grid, Z_obs;
-                 aspect_ratio=1,
-                 title=title_right,
-                 xlabel="x", ylabel="y",
-                 colorbar_title="objective")
-
-    return plot(p1, p2; layout=(1,2))
-end
-
 ##################################
 # Make Inference Debugging Figures
 ##################################
@@ -311,10 +204,14 @@ end
 
 For the cache record referenced by eval `e`, trains a quick IQL policy on the anonymized buffer stored in the cache and computes, across a grid of states, the action
 action chosen by:
- - a planning solver (MCTS/DPW) that we treat as the "true"/expert policy
+ - a "true" policy (either a planning solver via MCTS/DPW, or a learned policy via SoftQ) that we treat as the expert baseline
  - the quick_IQL learned policy
 
 Produces a 1x3 figure: (true action quiver, IQL action quiver, agreement heatmap). If `savepath` is provided the PNG is written and the filename returned; otherwise the Plots.jl object is returned.
+
+# Arguments
+- `solver_type::Symbol`: Either `:mcts` for planning-based MCTS/DPW planner, or `:softq` for a trained SoftQ policy
+- `solver_params`: For `:mcts`, pass `[:dpw, n_iterations, exploration_constant]`. For `:softq`, pass `[n_samples, epochs, batch_size]` (default `[2000, 2, 256]`)
 """
 function compare_iql_vs_true_policy(cache::Dict, e; gridsize::Int=80, solver_type::Symbol=:mcts, solver_params=[:dpw, 1000, 10.0], show_quiver::Bool=true, savepath=nothing)
     rec = cache_record_for_eval(cache, e)
@@ -329,13 +226,22 @@ function compare_iql_vs_true_policy(cache::Dict, e; gridsize::Int=80, solver_typ
     # Train quick IQL (may be fast) on this mdp + anon buffer
     π_iql, _, _ = quick_IQL(mdp, anon_buf)
 
-    # Build planner (true policy)
-    𝒮 = solver_from_type(mdp, solver_type; solver_params=solver_params)
-    # solver_from_type may return an array for :all; pick first if so
-    if isa(𝒮, AbstractArray)
-        𝒮 = 𝒮[1]
+    # Build "true" policy (either MCTS planner or SoftQ)
+    if solver_type == :softq
+        # For SoftQ, solver_params should be [N, epochs, batch_size]
+        N = solver_params[1]
+        epochs = solver_params[2]
+        batch_size = solver_params[3]
+        _, π_true = RL.softq_policy(mdp; N=N, epochs=epochs, batch_size=batch_size)
+    else
+        # Default to MCTS-based planner
+        𝒮 = solver_from_type(mdp, :mcts; solver_params=solver_params)
+        # solver_from_type may return an array for :all; pick first if so
+        if isa(𝒮, AbstractArray)
+            𝒮 = 𝒮[1]
+        end
+        π_true = solve(𝒮, mdp)
     end
-    π_true = solve(𝒮, mdp)
 
     # helpers
     as = actions(mdp)
@@ -383,28 +289,43 @@ function compare_iql_vs_true_policy(cache::Dict, e; gridsize::Int=80, solver_typ
 
     @inbounds for (j, y) in enumerate(ys)
         for (i, x) in enumerate(xs)
-            s = _state_at_xy(mdp, x, y)
-            # true action (planner)
+            s = Priors._state_at_xy(mdp, x, y)
+            obs = MuKumari.shape_state_as_obs(mdp, s)
+            
+            # true action (planner) - for POMDP planners, pass observation/belief
+            a_true = nothing
             try
+                # Try to use the planner directly (for neural network policies)
                 a_true = action(π_true, s)[1]
-            catch err
-                # fallback to evaluating Q-values
-                as_list = actions(mdp)
-                all_a_onehot = Flux.onehotbatch(as_list, as_list)
-                qv = vec(Crux.value(π_true, MuKumari.shape_state_as_obs(mdp, s), all_a_onehot))
-                aidx = argmax(qv)
-                a_true = as_list[aidx]
+            catch err1
+                try
+                    # Fallback: evaluate Q-values for neural policies
+                    as_list = actions(mdp)
+                    all_a_onehot = Flux.onehotbatch(as_list, as_list)
+                    qv = vec(Crux.value(π_true, obs, all_a_onehot))
+                    aidx = argmax(qv)
+                    a_true = as_list[aidx]
+                catch err2
+                    # Last resort: just pick a random action
+                    a_true = rand(actions(mdp))
+                end
             end
 
             # iql action
+            a_iql = nothing
             try
                 a_iql = action(π_iql, s)[1]
-            catch err
-                as_list = actions(mdp)
-                all_a_onehot = Flux.onehotbatch(as_list, as_list)
-                qv = vec(Crux.value(π_iql, MuKumari.shape_state_as_obs(mdp, s), all_a_onehot))
-                aidx = argmax(qv)
-                a_iql = as_list[aidx]
+            catch err1
+                try
+                    as_list = actions(mdp)
+                    all_a_onehot = Flux.onehotbatch(as_list, as_list)
+                    qv = vec(Crux.value(π_iql, obs, all_a_onehot))
+                    aidx = argmax(qv)
+                    a_iql = as_list[aidx]
+                catch err2
+                    # Last resort: just pick a random action
+                    a_iql = rand(actions(mdp))
+                end
             end
 
             ux_t, vy_t = action_to_unit_vector(a_true)

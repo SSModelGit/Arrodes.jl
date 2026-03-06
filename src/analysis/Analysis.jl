@@ -50,9 +50,7 @@ export eval_pack,
     best_eval_by_accuracy
 
 include("ablations.jl")
-export eval_ablation_mdp,
-    eval_ablation_from_cache,
-    run_ablation_suite,
+export eval_ablation_from_cache,
     ablation_main,
     reconstruct_mdp_from_cache,
     generate_and_cache_ablation_data,
