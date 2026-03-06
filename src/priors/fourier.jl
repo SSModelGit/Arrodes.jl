@@ -3,17 +3,6 @@
 ################
 
 """
-    K_probs(cfg::FourierDiscreteCfg)
-
-Constructs categorical vector mapping k-count to exponential decay distribution.
-"""
-function K_probs(cfg::FourierDiscreteCfg)
-    ws = exp.(-cfg.λK .* (0:(cfg.Kmax-1)))
-    ws ./= sum(ws)
-    return ws
-end
-
-"""
     freq_bin_support_and_probs(cfg::FourierDiscreteCfg)
 
 TODO: Constructs categorical vector mapping freq to exp decay??

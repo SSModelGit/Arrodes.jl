@@ -1,9 +1,17 @@
 using Parameters: @with_kw
 using Gen
 
-export FourierDiscreteCfg, ScoreΠDist, MuEnvSpec, METHOD_LABELS, RunPack, actiondirac
+export FourierDiscreteCfg, ScoreΠDist, MuEnvSpec, METHOD_LABELS, RunPack, actiondirac, PriorDiscreteCfg, RBFDiscreteCfg
 
-@with_kw struct FourierDiscreteCfg
+"""
+    PriorDiscreteCfg
+
+Abstract supertype for discrete prior configurations.
+Concrete subtypes include FourierDiscreteCfg and RBFDiscreteCfg.
+"""
+abstract type PriorDiscreteCfg end
+
+@with_kw struct FourierDiscreteCfg <: PriorDiscreteCfg
     Kmax::Int = 10
     λK::Float64 = 0.35            # P(K=k) ∝ exp(-λK*(k-1))
 
@@ -20,6 +28,31 @@ export FourierDiscreteCfg, ScoreΠDist, MuEnvSpec, METHOD_LABELS, RunPack, actio
 
     # optional: bias towards lower |freq|
     freq_mag_decay::Float64 = 0.0
+end
+
+"""
+    RBFDiscreteCfg
+
+Configuration for radial basis function (RBF) field prior.
+
+# Fields
+- `N_max::Int`: Maximum number of RBF centers (Gaussians)
+- `λN::Float64`: Exponential decay parameter for P(N=n) ∝ exp(-λN*(n-1))
+- `σ::Float64`: Standard deviation (bandwidth) of each Gaussian kernel
+- `x_min, x_max, y_min, y_max::Float64`: Spatial bounds for center placement
+"""
+@with_kw struct RBFDiscreteCfg <: PriorDiscreteCfg
+    Kmax::Int = 5
+    λK::Float64 = 0.5             # P(N=n) ∝ exp(-λN*(n-1))
+    
+    # Gaussian bandwidth
+    σ::Float64 = 1.0
+    
+    # Spatial bounds for RBF center placement
+    x_min::Float64 = 0.0
+    x_max::Float64 = 10.0
+    y_min::Float64 = 0.0
+    y_max::Float64 = 10.0
 end
 
 @with_kw struct ScoreΠDist
