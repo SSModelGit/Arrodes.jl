@@ -1,246 +1,109 @@
-################
-# Discretization
-################
+
+
+################################################################################
+# NEW COMPONENTFIELD-BASED IMPLEMENTATION
+################################################################################
 
 """
-    freq_bin_support_and_probs(cfg::FourierDiscreteCfg)
+    RandomFourierField <: ComponentField
 
-TODO: Constructs categorical vector mapping freq to exp decay??
+A continuous Fourier component field type for the new ComponentField API.
+
+Represents sinusoidal component objectives with configurable continuous parameter
+distributions. Replaces the old discrete implementation using Gen.jl for
+probabilistic parameter sampling.
+
+Parameters:
+- `amplitude_max::Float64`: Maximum amplitude for uniform sampling [0, amplitude_max]
+- `freq_max::Float64`: Maximum frequency for uniform sampling [0, freq_max]
 """
-function freq_bin_support_and_probs(cfg::FourierDiscreteCfg)
-    supp = collect(-cfg.Fmax_i:cfg.Fmax_i)
-    if cfg.freq_mag_decay <= 0
-        ws = fill(1.0, length(supp))
-    else
-        ws = exp.(-cfg.freq_mag_decay .* abs.(supp))
-    end
-    ws ./= sum(ws)
-    return supp, ws
+@with_kw struct RandomFourierField <: ComponentField
+    amplitude_max::Float64 = 10.0
+    freq_max::Float64 = π
 end
 
 """
-    amp_bin_support_and_probs(cfg::FourierDiscreteCfg)
+    component_type(::Type{RandomFourierField})::String
 
-TODO: Constructs categorical vector mapping amplitude to uniform??
+Return the identifier for this component type.
 """
-function amp_bin_support_and_probs(cfg::FourierDiscreteCfg)
-    supp = collect(0:cfg.Amax_i)
-    ws = fill(1.0, length(supp))
-    ws ./= sum(ws)
-    return supp, ws
+function component_type(::Type{RandomFourierField})::String
+    return "Fourier"
 end
 
 """
-    phase_bin_support_and_probs(cfg::FourierDiscreteCfg)
+    sample_component_params(field::RandomFourierField)
 
-TODO: Constructs categorical vector mapping ϕ to uniform??
+Sample Fourier parameters using specific bounds from field instance.
+
+Allows customization of parameter bounds per component type instance.
 """
-function phase_bin_support_and_probs(cfg::FourierDiscreteCfg)
-    supp = collect(0:(cfg.P-1))
-    ws = fill(1.0, length(supp))
-    ws ./= sum(ws)
-    return supp, ws
-end
-
-@inline f_from_i(i::Int, cfg::FourierDiscreteCfg) = i * cfg.Δf
-@inline A_from_i(i::Int, cfg::FourierDiscreteCfg) = i * cfg.ΔA
-@inline ϕ_from_i(i::Int, cfg::FourierDiscreteCfg) = 2π * (i / cfg.P)
-
-################################
-# Fourier Feature Key Operations
-################################
-
-"""
-Internal: sample discrete Fourier indices with an override for K and with controllable supports.
-Returns (key, ff_namedtuple, sweep_tag, sweep_level, cfg_used)
-"""
-function sample_fourier_key(cfg::FourierDiscreteCfg;
-                            K_override::Union{Nothing,Int}=nothing,
-                            rng=Random.default_rng())
-
-    # Supports/probs
-    Kp = K_probs(cfg)
-    freq_supp, freq_w = freq_bin_support_and_probs(cfg)
-    amp_supp, amp_w   = amp_bin_support_and_probs(cfg)
-
-    K = isnothing(K_override) ? rand(rng, Categorical(Kp)) : K_override
-    K = clamp(K, 1, cfg.Kmax)
-
-    fx_idx = Vector{Int}(undef, K)
-    fy_idx = Vector{Int}(undef, K)
-    A_idx  = Vector{Int}(undef, K)
-    ϕ_idx  = Vector{Int}(undef, K)
-
-    for m in 1:K
-        fx_idx[m] = freq_supp[randcat(rng, freq_w)]
-        fy_idx[m] = freq_supp[randcat(rng, freq_w)]
-        A_idx[m]  = amp_supp[randcat(rng, amp_w)]
-        ϕ_idx[m]  = rand(rng, 0:cfg.P-1)
-    end
-
-    key = (K, fx_idx, fy_idx, A_idx, ϕ_idx)
-    return key
+@gen function sample_component_params(field::RandomFourierField)
+    amplitude ~ Gen.uniform(0, field.amplitude_max)
+    frequency ~ Gen.uniform(0, field.freq_max)
+    phase ~ Gen.uniform(0, 2π)
+    
+    return Dict(
+        "amplitude" => amplitude,
+        "frequency" => frequency,
+        "phase" => phase
+    )
 end
 
 """
-Decode Fourier key of the form (K, fx_i, fy_i, A_i, ϕ_i) into continuous params.
-Assumes fx_i etc are integer vectors of length K (or length Kmax, if fixed-bank).
+    make_component(::Type{RandomFourierField}, params::Dict{String, Any})::Function
+
+Construct a Fourier scalar field from sampled parameters.
+
+Implements the field formula: f(x, y) = A * cos(f*x + f*y + ϕ)
+
+This matches the old discrete implementation's field formula, now with
+continuous parameters sampled via Gen.jl instead of discretized bins.
+
+# Arguments
+- `params::Dict`: Must contain keys "amplitude", "frequency", "phase"
+
+# Returns
+- `Function`: Scalar field f(x::Real, y::Real)::Float64
 """
-function decode_fourier_key(key, cfg::FourierDiscreteCfg)
-    # Support two input key shapes:
-    #  - tuple key: (K, fx_i, fy_i, A_i, ϕ_i) -> return NamedTuple bank (old behavior)
-    #  - vector key: Vector of per-mode tuples -> convert to NamedTuple bank
-    if key isa Tuple
-        K, fx_i, fy_i, A_i, ϕ_i = key
-        # use only active prefix if vectors are longer
-        fx = f_from_i.(fx_i[1:K], Ref(cfg))
-        fy = f_from_i.(fy_i[1:K], Ref(cfg))
-        A  = A_from_i.(A_i[1:K],  Ref(cfg))
-        ϕ  = ϕ_from_i.(ϕ_i[1:K],  Ref(cfg))
-        return (K=K, fx=fx, fy=fy, A=A, ϕ=ϕ, fx_i=fx_i[1:K], fy_i=fy_i[1:K], A_i=A_i[1:K], ϕ_i=ϕ_i[1:K])
-    elseif key isa AbstractVector
-        modes = key
-        K = length(modes)
-        fx = [m[1] for m in modes]
-        fy = [m[2] for m in modes]
-        A  = [m[3] for m in modes]
-        ϕ  = [m[4] for m in modes]
-        fx_i = [m[5] for m in modes]
-        fy_i = [m[6] for m in modes]
-        A_i  = [m[7] for m in modes]
-        ϕ_i  = [m[8] for m in modes]
-        return (K=K, fx=fx, fy=fy, A=A, ϕ=ϕ, fx_i=fx_i, fy_i=fy_i, A_i=A_i, ϕ_i=ϕ_i)
-    else
-        error("Unsupported key type for decode_fourier_key: ", typeof(key))
+function make_component(::Type{RandomFourierField}, params::Dict{String, Any})::Function
+    A = params["amplitude"]
+    f = params["frequency"]
+    φ = params["phase"]
+    
+    # Field formula: f(x,y) = A * cos(f*x + f*y + ϕ)
+    function fourier_field(x::Real, y::Real)::Float64
+        return A * cos(f * x + f * y + φ)
     end
+    
+    return fourier_field
 end
 
 """
-    hamming_fourier_key(k1, k2) -> Int
+    describe_component_params(::Type{RandomFourierField})::String
 
-Hamming distance on Fourier *discrete* key representation.
-
-Key format assumed:
-    (K::Int, fx_i::Vector{Int}, fy_i::Vector{Int}, A_i::Vector{Int}, ϕ_i::Vector{Int})
-
-Only compare the active prefixes (1:K), and add abs(K1-K2).
+Return documentation for Fourier component parameters.
 """
-function hamming_fourier_key(k1, k2)
-    K1, fx1, fy1, A1, ϕ1 = k1
-    K2, fx2, fy2, A2, ϕ2 = k2
-    d = abs(K1 - K2)
-
-    K = min(K1, K2)
-    @inbounds for m in 1:K
-        d += (fx1[m] != fx2[m])
-        d += (fy1[m] != fy2[m])
-        d += (A1[m]  != A2[m])
-        d += (ϕ1[m]  != ϕ2[m])
-    end
-
-    # treat unmatched tail entries as mismatches
-    if K1 != K2
-        Kbig = max(K1, K2)
-        d += 4 * (Kbig - K)  # each extra mode has 4 discrete indices
-    end
-    return d
-end
-
-"""
-    nearest_trained_key(π_dist, key; min_trained=1)
-
-Returns the closest key among those already in π_dist.n_π_proposals and
-whose training steps record indicates ≥ min_trained.
-Returns `nothing` if none exist.
-"""
-function nearest_trained_key(π_dist::ScoreΠDist, key; min_trained::Int=1)
-    best = nothing
-    best_d = typemax(Int)
-
-    # fall back if training bookkeeping not present yet
-    steps = get!(π_dist.n_𝒮_proposals, :_trained_steps) do
-        Dict{Any,Int}()
-    end
-
-    for k in keys(π_dist.n_π_proposals)
-        # skip non-keys (e.g. :iql)
-        k isa Tuple || continue
-        get(steps, k, 0) ≥ min_trained || continue
-
-        d = hamming_fourier_key(key, k)
-        if d < best_d
-            best = k
-            best_d = d
-        end
-    end
-    return best
-end
-
-##############################
-# Arbitrary Field Construction
-##############################
-
-"""
-    make_fourier_scalar_field(bank; normalize=true)
-
-Returns:
-- field(x::Real, y::Real)::Float64
-
-Definition:
-  field(x,y) = Σ_{m=1..K} A[m] * cos(fx[m]*x + fy[m]*y + ϕ[m])
-
-If `scaleQ=true`, divides by max(1,K) so magnitude doesn't explode with K.
-"""
-function make_fourier_scalar_field(bank; scaleQ::Bool=true)
-    # accept either the named-tuple bank or a Vector of per-mode tuples
-    if bank isa AbstractVector
-        modes = bank
-        K = length(modes)
-        fx = [m[1] for m in modes]
-        fy = [m[2] for m in modes]
-        A  = [m[3] for m in modes]
-        ϕ  = [m[4] for m in modes]
-    else
-        K  = bank.K
-        fx = bank.fx
-        fy = bank.fy
-        A  = bank.A
-        ϕ  = bank.ϕ
-    end
-    invK = scaleQ ? (1.0 / max(1, K)) : 1.0
-
-    field = function (x::Real, y::Real)
-        acc = 0.0
-        @inbounds for m in 1:K
-            acc += A[m] * cos(fx[m]*x + fy[m]*y + ϕ[m])
-        end
-        return invK * acc
-    end
-
-    return field
-end
-
-"""
-    objective_grid_from_key(key, cfg, xs, ys)
-
-Build objective scalar field from Fourier key+cfg and evaluate on grid.
-"""
-function objective_grid_from_key(key, cfg, xs, ys)
-    bank = decode_fourier_key(key, cfg)
-    if bank isa AbstractVector
-        K = length(bank)
-        fx = [m.fx for m in bank]
-        fy = [m.fy for m in bank]
-        A  = [m.A  for m in bank]
-        ϕ  = [m.ϕ  for m in bank]
-        fx_i = [m.fx_i for m in bank]
-        fy_i = [m.fy_i for m in bank]
-        A_i  = [m.A_i  for m in bank]
-        ϕ_i  = [m.ϕ_i  for m in bank]
-        bank_nt = (K=K, fx=fx, fy=fy, A=A, ϕ=ϕ, fx_i=fx_i, fy_i=fy_i, A_i=A_i, ϕ_i=ϕ_i)
-        field = make_fourier_scalar_field(bank_nt; scaleQ=true)
-    else
-        field = make_fourier_scalar_field(bank; scaleQ=true)
-    end
-    return objective_grid_from_field(field, xs, ys)
+function describe_component_params(::Type{RandomFourierField})::String
+    return """
+    Component Field Type: Fourier (RandomFourierField)
+    Description: Continuous sinusoidal field (replacing old discretized approach)
+    
+    Parameters:
+      amplitude ∈ [0, 10]
+        Distribution: uniform(0, 10) [continuous, sampled via Gen.jl]
+        Impact: Controls peak magnitude of the cosine component
+        
+      frequency ∈ [0, π]
+        Distribution: uniform(0, π) [continuous, sampled via Gen.jl]
+        Impact: Controls spatial frequency/wavelength
+        
+      phase ∈ [0, 2π)
+        Distribution: uniform(0, 2π) [continuous, sampled via Gen.jl]
+        Impact: Controls phase shift of the cosine
+    
+    Field Formula: f(x, y) = A * cos(f * x + f * y + φ)
+    
+    Note: This is the continuous version replacing the old discrete binned approach.
+    """
 end
