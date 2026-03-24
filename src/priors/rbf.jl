@@ -5,34 +5,6 @@
 ################################################################################
 
 """
-    RadialBasisField <: ComponentField
-
-A continuous Radial Basis Function (RBF) component field type for the new ComponentField API.
-
-Represents Gaussian RBF component objectives with configurable continuous parameter
-distributions. Replaces the old discrete implementation using Gen.jl for
-probabilistic parameter sampling.
-
-Parameters stored in struct to shape the distributions:
-- `x_min::Float64`: Minimum x-coordinate for center sampling
-- `x_max::Float64`: Maximum x-coordinate for center sampling
-- `y_min::Float64`: Minimum y-coordinate for center sampling
-- `y_max::Float64`: Maximum y-coordinate for center sampling
-- `amp_min::Float64`: Minimum amplitude for uniform sampling
-- `amp_max::Float64`: Maximum amplitude for uniform sampling
-- `σ::Float64`: Gaussian bandwidth (fixed, not sampled)
-"""
-@with_kw struct RadialBasisField <: ComponentField
-    x_min::Float64 = -5.0
-    x_max::Float64 = 5.0
-    y_min::Float64 = -5.0
-    y_max::Float64 = 5.0
-    amp_min::Float64 = 0.1
-    amp_max::Float64 = 5.0
-    σ::Float64 = 1.0
-end
-
-"""
     component_type(::RadialBasisField)
 
 Return the identifier for this component type.

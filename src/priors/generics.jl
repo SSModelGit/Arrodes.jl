@@ -1,18 +1,4 @@
 """
-    ComponentField
-
-Abstract supertype for component objective field definitions.
-
-Each concrete component field type (e.g., `RandomFourierField`, `RBFComponent`) 
-implements the required interface functions:
-- `component_type(::Type{CF}) -> String`
-- `sample_component_params(::Type{CF})` (must be @gen function)
-- `make_component(::Type{CF}, params::Dict) -> Function`
-- `describe_component_params(::Type{CF}) -> String` (optional)
-"""
-abstract type ComponentField end
-
-"""
     component_type(::ComponentField)
 
 Return the name/identifier of the component field type.

@@ -17,7 +17,7 @@ using GenParticleFilters: get_traces, get_log_weights
 
 using ..Utils
 using ..Priors
-import ..Arrodes: ScoreΠDist
+import ..Arrodes: ScoreΠDist, RLConfig, InferenceConfig
 
 include("solvers.jl")
 export beliefstate_for_pomdp, van_solver, dpw_solver, mcts_solver, deep_q_solver, deep_q_metrics,
@@ -30,7 +30,7 @@ export get_proposal_names, get_proposal_prior, get_idxable_proposal_prior_list, 
 
 include("training.jl")
 export training_budget, surrogate_dataset_from_iql_grid, _policy_model, _warm_start_params!, 
-       maybe_refine_policies!, ensure_policy_trained_to!
+       maybe_refine_policies!, ensure_policy_trained_to!, train_component_model_softq
 
 include("policies.jl")
 export proposal_boltzmann, greedy_action_symbol_from_boltzmann, qpolicy_action, softq_policy,

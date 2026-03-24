@@ -1,7 +1,10 @@
 using Parameters: @with_kw
 using Gen
 
-export FourierDiscreteCfg, ScoreΠDist, MuEnvSpec, METHOD_LABELS, RunPack, actiondirac, PriorDiscreteCfg, RBFDiscreteCfg
+export FourierDiscreteCfg, ScoreΠDist, MuEnvSpec, METHOD_LABELS, RunPack, actiondirac,
+    PriorDiscreteCfg, RBFDiscreteCfg,
+    ComponentField, RandomFourierField, RadialBasisField,
+    RLConfig, InferenceConfig
 
 """
     PriorDiscreteCfg
@@ -95,6 +98,66 @@ const actiondirac = ActionDirac()
 
 const METHOD_LABELS = ["Open-Ended SIPS", "IQ-SIPS"]
 
+"""
+    ComponentField
+
+Abstract supertype for component objective field definitions.
+
+Each concrete component field type (e.g., `RandomFourierField`, `RadialBasisField`) 
+implements the required interface functions:
+- `component_type(::Type{CF}) -> String`
+- `sample_component_params(::Type{CF})` (must be @gen function)
+- `make_component(::Type{CF}, params::Dict) -> Function`
+- `describe_component_params(::Type{CF}) -> String` (optional)
+"""
+abstract type ComponentField end
+
+"""
+    RandomFourierField <: ComponentField
+
+A continuous Fourier component field type for the new ComponentField API.
+
+Represents sinusoidal component objectives with configurable continuous parameter
+distributions. Replaces the old discrete implementation using Gen.jl for
+probabilistic parameter sampling.
+
+Parameters:
+- `amplitude_max::Float64`: Maximum amplitude for uniform sampling [0, amplitude_max]
+- `freq_max::Float64`: Maximum frequency for uniform sampling [0, freq_max]
+"""
+@with_kw struct RandomFourierField <: ComponentField
+    amplitude_max::Float64 = 10.0
+    freq_max::Float64 = π
+end
+
+"""
+    RadialBasisField <: ComponentField
+
+A continuous Radial Basis Function (RBF) component field type for the new ComponentField API.
+
+Represents Gaussian RBF component objectives with configurable continuous parameter
+distributions. Replaces the old discrete implementation using Gen.jl for
+probabilistic parameter sampling.
+
+Parameters stored in struct to shape the distributions:
+- `x_min::Float64`: Minimum x-coordinate for center sampling
+- `x_max::Float64`: Maximum x-coordinate for center sampling
+- `y_min::Float64`: Minimum y-coordinate for center sampling
+- `y_max::Float64`: Maximum y-coordinate for center sampling
+- `amp_min::Float64`: Minimum amplitude for uniform sampling
+- `amp_max::Float64`: Maximum amplitude for uniform sampling
+- `σ::Float64`: Gaussian bandwidth (fixed, not sampled)
+"""
+@with_kw struct RadialBasisField <: ComponentField
+    x_min::Float64 = -5.0
+    x_max::Float64 = 5.0
+    y_min::Float64 = -5.0
+    y_max::Float64 = 5.0
+    amp_min::Float64 = 0.1
+    amp_max::Float64 = 10.0
+    σ::Float64 = 0.5
+end
+
 @with_kw struct RunPack
     run_id::Int                 # top-level run index in the BSON
     agent::String               # "ag1".."ag7"
@@ -103,4 +166,54 @@ const METHOD_LABELS = ["Open-Ended SIPS", "IQ-SIPS"]
     full::Any                   # ExperienceBuffer (full)
     anon::Any                   # ExperienceBuffer (anon; used for IQL)
     ann::NamedTuple             # (num_goals, num_obstacles, max_goal_separation)
+end
+
+"""
+    RLConfig
+
+Configuration structure for SoftQ-learn hyperparameters in component generative inference.
+
+Fields:
+- `temperature::Float64`: Boltzmann temperature for policy (default: 1.0)
+- `n_iterations::Int`: Number of SoftQ iterations per particle (default: 100)
+- `learning_rate::Float64`: SoftQ learning rate (default: 0.01)
+- `value_reg::Float64`: Value function regularization coefficient (default: 0.001)
+- `n_samples_per_state::Int`: Number of samples for value estimation (default: 10)
+- `epochs::Int`: Number of training epochs for SoftQ solver (default: 2)
+- `batch_size::Int`: Batch size for mini-batch updates in SoftQ solver (default: 512)
+"""
+@with_kw struct RLConfig
+    temperature::Float64 = 1.0
+    n_iterations::Int = 100
+    learning_rate::Float64 = 0.01
+    value_reg::Float64 = 0.001
+    n_samples_per_state::Int = 10
+    epochs::Int = 2
+    batch_size::Int = 512
+end
+
+"""
+    InferenceConfig
+
+Configuration structure that bundles all inference parameters for generative model learning.
+
+Fields:
+- `component_tuples::Vector{Tuple}`: Vector of (ComponentField, sampling_function) tuples
+- `component_params_switch::Gen.Switch`: Gen switch for sampling component parameters
+- `component_type_sampler::Function`: Function to sample component types from available tuples.
+- `k_components::Integer`: Number of components to generate (note: NOT the number of component types)
+- `rl_config::RLConfig`: SoftQ-learn hyperparameters (default: RLConfig())
+- `agent_params::Dict{String, Any}`: Additional agent-specific parameters (default: Dict())
+- `iterative_deepening::Bool`: Enable iterative deepening search (default: false)
+- `metadata::Dict{String, Any}`: Problem-specific metadata (default: Dict())
+"""
+@with_kw struct InferenceConfig
+    component_tuples::Vector{Tuple}
+    component_params_switch::Gen.Switch
+    component_type_sampler::Function
+    k_components::Integer = 1
+    rl_config::RLConfig = RLConfig()
+    agent_params::Dict{String, Any} = Dict()
+    iterative_deepening::Bool = false
+    metadata::Dict{String, Any} = Dict()
 end

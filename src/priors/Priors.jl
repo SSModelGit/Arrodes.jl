@@ -7,7 +7,8 @@ using Gen
 
 using MuKumari
 
-import ..Arrodes: FourierDiscreteCfg, ScoreΠDist, PriorDiscreteCfg, RBFDiscreteCfg
+import ..Arrodes: FourierDiscreteCfg, ScoreΠDist, PriorDiscreteCfg, RBFDiscreteCfg,
+    ComponentField, RandomFourierField, RadialBasisField
 import ..Utils: randcat
 
 include("generics.jl")
@@ -61,6 +62,7 @@ Args:
   - component_fields: Vector of ComponentField instances (should match order of component switch)
 Returns:
   - sample_component_type: Gen.@gen function that samples a component index based on the number of fields
+    - Note that sample_component_type doesn't take any arguments!
 """
 function component_type_sampler(component_fields::Vector)
     Gen.@gen function sample_component_type(c_fields::Vector=component_fields)

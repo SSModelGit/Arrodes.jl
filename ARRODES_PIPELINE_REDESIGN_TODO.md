@@ -495,71 +495,25 @@ component_fn = make_component(typeof(component_field), params)
 
 ### 3.1 Conceptual Foundation
 
-The **configuration structure** bundles all user-defined parameters, component types, and references into a single object passed to the generative inference model and particle filter.
+The **configuration structure** bundles all user-defined parameters, component sampling infrastructure, and RL hyperparameters into a single object passed to the generative inference model and particle filter.
 
-This structure serves a similar role to the current `ScoreΠDist`, but generalized and extensible.
+This structure encapsulates:
+- The tuple-based component infrastructure from Part 2 (component tuples + sampling functions)
+- RL learning hyperparameters (SoftQ-learn configuration)
+- MDP parameters
+- Number of components to generate
+- Optional iterative deepening strategy
 
-### 3.2 Configuration Structure Definition
+This serves a similar role to the current `ScoreΠDist`, but generalized and extensible.
+
+### 3.2 RL Configuration Structure
 
 **File:** `src/config/inference_config.jl`
 
+The `RLConfig` struct encapsulates SoftQ-learn hyperparameters. It is defined with `@with_kw` to provide default initial arguments aligned with current SoftQ learning usage.
+
 ```julia
-"""
-    ComponentRegistry
-
-Registry of all available component types for this inference run.
-"""
-struct ComponentRegistry
-    component_types::Vector{Type{<:ComponentField}}
-    
-    function ComponentRegistry(types::Vector{Type{<:ComponentField}})
-        @assert !isempty(types) "ComponentRegistry must contain at least one component type"
-        return new(types)
-    end
-end
-
-"""
-    InferenceConfig
-
-Complete configuration for SMC³ inference.
-
-Fields:
-- registry::ComponentRegistry          : Available component types
-- choice_dist::AbstractComponentChoiceDistribution : Distribution over component types
-- K::Int                               : Number of components in objective sum
-- agent_params::Dict                   : MDP agent parameters (discount, etc.)
-- rl_config::RLConfig                  : RL learning hyperparameters (SoftQ-learn)
-- warmstart_enabled::Bool              : Whether to use warm starts in filter
-- iterative_deepening::Bool            : Whether to increase iterations over filter steps
-- metadata::Dict{String, Any}          : User-defined metadata for tracking
-"""
-struct InferenceConfig
-    registry::ComponentRegistry
-    choice_dist::AbstractComponentChoiceDistribution
-    K::Int                              # number of components
-    agent_params::Dict{String, Any}
-    rl_config::RLConfig
-    warmstart_enabled::Bool
-    iterative_deepening::Bool
-    metadata::Dict{String, Any}
-    
-    function InferenceConfig(
-        registry::ComponentRegistry,
-        choice_dist::AbstractComponentChoiceDistribution,
-        K::Int;
-        agent_params::Dict=Dict(),
-        rl_config::RLConfig=RLConfig(),
-        warmstart_enabled::Bool=true,
-        iterative_deepening::Bool=true,
-        metadata::Dict=Dict()
-    )
-        @assert K >= 1 "K must be at least 1"
-        return new(
-            registry, choice_dist, K, agent_params, rl_config,
-            warmstart_enabled, iterative_deepening, metadata
-        )
-    end
-end
+using Parameters: @with_kw
 
 """
     RLConfig
@@ -567,90 +521,69 @@ end
 Configuration for SoftQ-learn parameter learning.
 
 Fields:
-- temperature::Float64                 : Boltzmann temperature for policy
-- n_iterations::Int                    : Number of SoftQ iterations per particle
-- learning_rate::Float64               : SoftQ learning rate
-- value_reg::Float64                   : Value function regularization
-- n_samples_per_state::Int             : Samples for value estimation
+- temperature::Float64                 : Boltzmann temperature for policy (default: 1.0)
+- n_iterations::Int                    : Number of SoftQ iterations per particle (default: 100)
+- learning_rate::Float64               : SoftQ learning rate (default: 0.01)
+- value_reg::Float64                   : Value function regularization (default: 0.001)
+- n_samples_per_state::Int             : Samples for value estimation (default: 10)
 """
-struct RLConfig
-    temperature::Float64
-    n_iterations::Int
-    learning_rate::Float64
-    value_reg::Float64
-    n_samples_per_state::Int
+@with_kw struct RLConfig
+    temperature::Float64 = 1.0
+    n_iterations::Int = 100
+    learning_rate::Float64 = 0.01
+    value_reg::Float64 = 0.001
+    n_samples_per_state::Int = 10
+end
+```
+
+### 3.3 Inference Configuration Structure
+
+The `InferenceConfig` struct is defined with `@with_kw` and encapsulates all configuration needed for inference. It requires:
+
+- **component_tuples**: Vector of `(ComponentField_instance, sampling_function)` tuples (no default)
+- **component_type_sampler**: Function that provides `@gen` function for uniform categorical selection (defaults to `component_type_sampler(component_fields)` from Priors module)
+- **rl_config**: RLConfig with SoftQ hyperparameters (defaults to `RLConfig()`)
+- **k_components**: Number of components to generate via `sample_component_and_params` (no default)
+- **agent_params**: Dict of MDP parameters (default: `Dict()`)
+- **iterative_deepening**: Whether to increase SoftQ iterations over filter steps (default: `false`)
+- **metadata**: User-defined metadata for experiment tracking (default: `Dict()`)
+
+```julia
+"""
+    InferenceConfig
+
+Complete configuration for SMC³ inference.
+
+Fields:
+- component_tuples::Vector{Tuple}           : (ComponentField, sampling_function) tuples
+- component_type_sampler::Function          : @gen function for component type selection
+- rl_config::RLConfig                       : SoftQ-learn hyperparameters
+- k_components::Integer                     : Number of components to generate (NOT number of types)
+- agent_params::Dict{String, Any}           : MDP agent parameters (discount, horizon, etc.)
+- iterative_deepening::Bool                 : Whether to increase SoftQ iterations over filter steps
+- metadata::Dict{String, Any}               : User-defined metadata for tracking
+
+Note on warm starts: Warm starting is not implemented in this version because defining
+'closeness' of objective functions in continuous parameter space is non-trivial and does
+not provide sufficient efficiency gains to justify the added complexity.
+"""
+@with_kw struct InferenceConfig
+    component_tuples::Vector{Tuple}
+    component_type_sampler::Function
+    rl_config::RLConfig = RLConfig()
+    k_components::Integer
+    agent_params::Dict{String, Any} = Dict()
+    iterative_deepening::Bool = false
+    metadata::Dict{String, Any} = Dict()
     
-    function RLConfig(;
-        temperature::Float64=1.0,
-        n_iterations::Int=100,
-        learning_rate::Float64=0.01,
-        value_reg::Float64=0.001,
-        n_samples_per_state::Int=10
-    )
-        return new(temperature, n_iterations, learning_rate, value_reg, n_samples_per_state)
+    # Validation
+    function InferenceConfig(component_tuples, component_type_sampler, rl_config, k_components, agent_params, iterative_deepening, metadata)
+        @assert !isempty(component_tuples) "component_tuples must not be empty"
+        @assert k_components >= 1 "k_components must be at least 1"
+        return new(component_tuples, component_type_sampler, rl_config, k_components, agent_params, iterative_deepening, metadata)
     end
 end
 ```
-
-### 3.3 Factory Functions
-
-```julia
-"""
-    make_inference_config(K::Int; kwargs...) -> InferenceConfig
-
-Convenience constructor with sensible defaults.
-
-Includes RandomFourierField and RadialBasisField by default, with uniform choice distribution.
-"""
-function make_inference_config(K::Int;
-    registry::ComponentRegistry=ComponentRegistry([RandomFourierField, RadialBasisField]),
-    choice_dist::AbstractComponentChoiceDistribution=
-        make_uniform_choice_dist([RandomFourierField, RadialBasisField]),
-    agent_params::Dict=Dict(),
-    rl_config::RLConfig=RLConfig(),
-    warmstart_enabled::Bool=true,
-    iterative_deepening::Bool=true,
-    metadata::Dict=Dict()
-)
-    return InferenceConfig(
-        registry, choice_dist, K,
-        agent_params=agent_params,
-        rl_config=rl_config,
-        warmstart_enabled=warmstart_enabled,
-        iterative_deepening=iterative_deepening,
-        metadata=metadata
-    )
-end
-```
-
-### 3.4 Usage Example
-
-```julia
-# User code: construct inference config for specific problem
-
-# Define which component types to use
-my_registry = ComponentRegistry([RandomFourierField, RadialBasisField, MyCustomComponent])
-
-# Define probability of selecting each type
-my_choice_dist = make_weighted_choice_dist(
-    [RandomFourierField, RadialBasisField, MyCustomComponent],
-    [0.5, 0.3, 0.2]  # 50% Fourier, 30% RBF, 20% custom
-)
-
-# Configure inference
-config = InferenceConfig(
-    registry=my_registry,
-    choice_dist=my_choice_dist,
-    K=5,  # 5 components in objective
-    agent_params=Dict("discount"=>0.99, "horizon"=>100),
-    rl_config=RLConfig(temperature=1.5, n_iterations=200),
-    warmstart_enabled=true,
-    iterative_deepening=true,
-    metadata=Dict("experiment"=>"my_exp_v1")
-)
-```
-
----
 
 ## Part 4: Generative Inference Model
 
@@ -658,191 +591,186 @@ config = InferenceConfig(
 
 The **generative inference model** is a Gen.jl `@gen` function that:
 
-1. Samples component types K times from `choice_dist`
-2. For each component type, samples parameters from its distribution
-3. Assembles each component using the component type's assembly function
-4. Sums all K components to form complete objective function
-5. Constructs MDP from objective and learns optimal Q-function via SoftQ-learn
-6. Learns Boltzmann policy from Q-function
-7. Evaluates likelihood of observations under the learned policy
+1. Samples K components via the Part 2 infrastructure (`sample_component_and_params`)
+2. For each sampled component, assembles it using the component type's assembly function
+3. Sums all K components to form the complete objective function
+4. Constructs MDP from objective and learns Q-function via SoftQ-learn
+5. Learns Boltzmann policy from Q-function
+6. Evaluates likelihood of observations under the learned policy
+7. Returns only the likelihood (Float64) as the particle weight
 
-This model is traced probabilistically by Gen.jl, enabling particle filtering.
+**Key Design Principle:** The `@gen` function is a pure probabilistic model that:
+- Traces all stochasticity (component selection + parameter sampling) via Gen.jl
+- Performs deterministic computation (objective assembly, Q-learning, policy construction)
+- Returns a single scalar likelihood weight for particle filtering
+
+All sampled choices are automatically recorded in the Gen trace; the particle filter extracts them via trace choice addresses.
 
 ### 4.2 Model Structure
 
 **File:** `src/inference/gen_model_continuous.jl` (replaces `src/inference/gen_model.jl`)
 
-```julia
-using Gen
-
-"""
-    InferenceTrace
-
-Structure holding a complete generative trace:
-- component_types::Vector{Type}        : Sequence of K sampled component types
-- component_params::Vector{Dict}       : Sequence of K parameter dictionaries
-- components::Vector{Function}         : Sequence of K assembled scalar fields
-- objective::Function                  : Complete summed objective
-- mdp::AbstractMDP                     : MDP constructed from objective
-- q_function::QLearner                 : Learned Q-function
-- policy::Function                     : Boltzmann policy derived from Q
-- observation_likelihood::Float64      : P(observations | policy)
-"""
-struct InferenceTrace
-    component_types::Vector{Type{<:ComponentField}}
-    component_params::Vector{Dict{String, Any}}
-    components::Vector{Function}
-    objective::Function
-    mdp::AbstractMDP
-    q_function::QLearner
-    policy::Function
-    observation_likelihood::Float64
-end
-```
-
-### 4.3 Generative Model Implementation
+The `@gen` function has the following structure:
 
 ```julia
 @gen function inference_model(
     config::InferenceConfig,
     observations::Vector{Int},
     state_data::Matrix{Float64}
-)::InferenceTrace
+)::Float64
+    # Phase 1: Sample K components (traced via Gen.jl)
+    # Phase 2: Assemble objective (deterministic)
+    # Phase 3: Build MDP & learn Q-function (deterministic)
+    # Phase 4: Construct policy (deterministic)
+    # Phase 5: Evaluate likelihood (deterministic)
+    # Phase 6: Return likelihood as Float64 weight
+end
+```
+
+**Trace Structure:** All sampled components and parameters are stored in the Gen trace via:
+- `trace[:sample_component_and_params => k => 1]` - component index for k-th component
+- `trace[:sample_component_and_params => k => 2]` - parameter dict for k-th component
+
+The particle filter accesses these via trace choice addresses to reconstruct component information.
+
+### 4.3 Generative Model Implementation
+
+```julia
+using Gen
+
+@gen function inference_model(
+    config::InferenceConfig,
+    observations::Vector{Int},
+    state_data::Matrix{Float64}
+)::Float64
     
-    # ========== Phase 1: Component Sampling ==========
-    # Sample K components, each from component choice distribution
+    # ========== Phase 1: Component Sampling (Gen-traced) ==========
+    # Build component infrastructure
+    (param_switch, component_fields) = build_component_param_switch(config.component_tuples)
+    sampler = (config.component_type_sampler !== nothing ? 
+               config.component_type_sampler : 
+               component_type_sampler(component_fields))
     
-    component_types = Vector{Type{<:ComponentField}}(undef, config.K)
-    component_params = Vector{Dict{String, Any}}(undef, config.K)
-    components = Vector{Function}(undef, config.K)
-    
-    for k in 1:config.K
-        # Sample component type from choice distribution
-        component_type ~ choose_component(config.choice_dist)
-        component_types[k] = component_type
-        
-        # Sample parameters from component type's distribution
-        param_spec = parameter_spec(component_type)
-        params = Dict{String, Any}()
-        
-        for (i, param_name) in enumerate(param_spec.names)
-            param_dist = param_spec.distributions[i]
-            param_sample ~ sample_param(param_dist)
-            params[param_name] = param_sample
-        end
-        component_params[k] = params
-        
-        # Assemble component scalar field function
-        components[k] = assemble_component(component_type, params)
+    # Sample K components, each traced by Gen.jl
+    # All choices stored in trace via Gen's address system
+    for k in 1:config.k_components
+        (idx, params) ~ sample_component_and_params(param_switch, sampler)
+        # Trace automatically stores this under address:
+        #   :sample_component_and_params => k => (1|2)
     end
     
-    # ========== Phase 2: Objective Construction ==========
+    # ========== Phase 2: Objective Construction (Deterministic) ==========
+    # Extract component data from locally computed values
+    # (In the filter, we'll reconstruct from trace as needed)
+    
+    components = Vector{Function}(undef, config.k_components)
+    for k in 1:config.k_components
+        # Note: In actual implementation, extract from trace or recompute
+        # Here shown conceptually - the filter reconstructs this from trace data
+        # idx = trace[:sample_component_and_params => k => 1]
+        # params = trace[:sample_component_and_params => k => 2]
+        # components[k] = make_component(typeof(component_fields[idx]), params)
+    end
+    
     # Assemble complete objective as sum of K components
+    objective(x::Float64, y::Float64)::Float64 = sum(c(x, y) for c in components)
     
-    function complete_objective(x::Float64, y::Float64)::Float64
-        total = 0.0
-        for comp in components
-            total += comp(x, y)
-        end
-        return total
-    end
+    # ========== Phase 3: MDP Construction & Q-Learning (Deterministic) ==========
+    # Build MDP from objective
+    mdp = construct_mdp_from_objective(objective, state_data, config.agent_params)
     
-    # ========== Phase 3: MDP Construction & Q-Learning ==========
-    # Build MDP from objective, learn Q-function and policy
+    # Learn Q-function using config's fixed iteration count
+    # (Iterative deepening happens in Part 5 filter, not here)
+    q_function = learn_q_function(mdp, observations, config.rl_config)
     
-    mdp = construct_mdp_from_objective(complete_objective, state_data, config.agent_params)
-    
-    q_learner = QLearner(mdp, config.rl_config)
-    q_function = learn_q_function(q_learner, observations, state_data)
-    
-    # ========== Phase 4: Policy Construction ==========
+    # ========== Phase 4: Policy Construction (Deterministic) ==========
     # Derive Boltzmann policy from Q-function
+    policy = make_boltzmann_policy(q_function, config.rl_config.temperature)
     
-    policy_fn = make_boltzmann_policy(q_function, config.rl_config.temperature)
-    
-    # ========== Phase 5: Likelihood Evaluation ==========
+    # ========== Phase 5: Likelihood Evaluation (Deterministic) ==========
     # Evaluate P(observations | policy)
-    
     log_likelihood = 0.0
-    for (t, obs_action) in enumerate(observations)
+    for t in 1:length(observations)
         state_t = state_data[:, t]
-        action_dist = policy_fn(state_t)  # Boltzmann distribution over actions
+        obs_action = observations[t]
+        action_dist = policy(state_t)
         log_likelihood += logpdf(action_dist, obs_action)
     end
+    
     observation_likelihood = exp(log_likelihood)
     
-    # ========== Phase 6: Return Complete Trace ==========
+    # ========== Phase 6: Return Likelihood as Weight ==========
+    return observation_likelihood  # Float64 - this becomes trace.retval
+end
+```
+
+**Key Implementation Notes:**
+
+1. **All sampling is traced:** The loop over `sample_component_and_params` automatically creates Gen trace entries. The filter can access these via `trace[:sample_component_and_params => k => 1]` (index) and `trace[:sample_component_and_params => k => 2]` (params).
+
+2. **No custom Gen.Distribution types needed:** `sample_component_and_params()` already handles tracing via Gen.Switch, so we don't need custom distribution wrappers.
+
+3. **Component reconstruction in filter:** The particle filter will reconstruct component information from the trace using:
+   ```julia
+   component_idxs = [trace[:sample_component_and_params => k => 1] 
+                     for k in 1:config.k_components]
+   component_params = [trace[:sample_component_and_params => k => 2] 
+                      for k in 1:config.k_components]
+   components = [make_component(typeof(component_fields[idx]), params)
+                for (idx, params) in zip(component_idxs, component_params)]
+   ```
+
+4. **Deterministic computation:** All Q-learning, objective assembly, and policy construction are deterministic and happen within the `@gen` function using fixed `config.rl_config.n_iterations`.
+
+5. **Simple return value:** The function returns only the likelihood as a Float64. This becomes `trace.retval` and is used by the particle filter as the particle weight.
+
+### 4.4 Accessing Particle Information from Traces
+
+The particle filter works with Gen traces directly, extracting data via choice addresses:
+
+```julia
+# In the particle filter (Part 5):
+function extract_particle_info(trace, config, component_fields)
+    # Extract component selections and parameters
+    component_idxs = Vector{Int}(undef, config.k_components)
+    component_params = Vector{Dict}(undef, config.k_components)
     
-    return InferenceTrace(
-        component_types,
-        component_params,
-        components,
-        complete_objective,
-        mdp,
-        q_function,
-        policy_fn,
-        observation_likelihood
-    )
+    for k in 1:config.k_components
+        component_idxs[k] = trace[:sample_component_and_params => k => 1]
+        component_params[k] = trace[:sample_component_and_params => k => 2]
+    end
+    
+    # Reconstruct components
+    components = [make_component(typeof(component_fields[idx]), params)
+                  for (idx, params) in zip(component_idxs, component_params)]
+    
+    # Reconstruct objective
+    objective(x, y) = sum(c(x, y) for c in components)
+    
+    return (component_idxs, component_params, components, objective)
 end
+
+# Particle weight is simply:
+weight = trace.retval  # The likelihood Float64
 ```
 
-### 4.4 Generative Primitives
+### 4.5 Why This Design
 
-Gen.jl integration requires defining distribution objects for each sampling step:
+**Advantages over previous InferenceTrace approach:**
 
-#### Primitive 1: Component Type Choice
+1. ✅ **Simpler**: No wrapper struct needed - Gen.Trace is the container
+2. ✅ **Cleaner code**: All stochasticity naturally traced by Gen.jl
+3. ✅ **Better Gen.jl integration**: Works with Gen's standard reweighting and resampling
+4. ✅ **Fewer dependencies**: No custom Gen.Distribution types to maintain
+5. ✅ **More modular**: Filter can reconstruct data as needed rather than storing it
+6. ✅ **Easier to extend**: New component types automatically work without changes to @gen function
 
-```julia
-struct ComponentTypeChoiceDist <: Gen.Distribution
-    choice_dist::AbstractComponentChoiceDistribution
-end
+**Trade-offs:**
 
-function Gen.logpdf(d::ComponentTypeChoiceDist, component_type::Type)
-    # Return log-probability of component_type under d.choice_dist
-    idx = findfirst(ct -> ct == component_type, d.choice_dist.component_types)
-    # Compute probability based on distribution type
-    return log(compute_prob(d.choice_dist, idx))
-end
+- Filter must reconstruct component information from traces (cheap operation, trace access is fast)
+- Separates model definition from trace extraction (cleaner separation of concerns)
 
-function Gen.random(d::ComponentTypeChoiceDist)
-    return sample_component_type(d.choice_dist, Random.GLOBAL_RNG)
-end
-```
-
-```julia
-@gen function choose_component(choice_dist::AbstractComponentChoiceDistribution)
-    component_type ~ choose_component_dist(ComponentTypeChoiceDist(choice_dist))
-    return component_type
-end
-```
-
-#### Primitive 2: Parameter Sampling
-
-```julia
-struct ParameterSamplingDist <: Gen.Distribution
-    param_dist_fn::Function  # ()->sample_value
-end
-
-function Gen.logpdf(d::ParameterSamplingDist, value::Float64)
-    # Depend on param_dist_fn's probability model
-    # For continuous: return 0 (improper uniform over ℝ)
-    # For proper distributions: return actual log-pdf
-    return 0.0
-end
-
-function Gen.random(d::ParameterSamplingDist)
-    return d.param_dist_fn()
-end
-```
-
-```julia
-@gen function sample_param(param_dist_fn::Function)
-    value ~ param_sampling(ParameterSamplingDist(param_dist_fn))
-    return value
-end
-```
-
-### 4.5 Key Differences from Old Approach
+### 4.6 Key Differences from Old Approach
 
 | Aspect | Old (Discretized) | New (Continuous) |
 |--------|-------------------|------------------|
@@ -860,282 +788,234 @@ end
 
 ### 5.1 Conceptual Foundation
 
-The **SMC³ particle filter** (Sequential Monte Carlo Cubed) is a particle filter specifically designed for open-ended SIPS:
+The **SMC³ particle filter** uses `GenParticleFilters.jl` to efficiently manage particle inference over a sequence of observations.
 
-1. Each particle represents a complete inference trace: K components + Q-function + policy
-2. Particles are weighted by how well their policy explains each observation
-3. Resampling removes low-probability particles
-4. **Warm starts:** Particles similar to survivors reuse their Q-function as initialization
-5. **Iterative deepening:** Number of SoftQ iterations increases as filter progresses
+**Key Architecture:**
 
-### 5.2 Particle Filter State
+1. **Observations as cumulative sequences:** Unlike some particle filters that add one observation at a time, the inference model takes cumulative observation slices `observations[1:t]`. This is efficient because:
+   - The inference model can see the full context (all actions taken so far)
+   - Q-learning operates on the complete history
+   - Policies learned reflect all historical decisions
+   - No need to modify model parameters as we go
 
-**File:** `src/inference/smc3_filter.jl` (replaces `src/inference/particle_filter.jl`)
+2. **Each particle represents:**
+   - A complete Gen trace from `inference_model_continuous()` containing:
+     * K sampled components (via traced `:components => k` choices)
+     * Learned Q-function for the assembled objective on observations[1:t]
+     * Boltzmann policy derived from Q-function
+     * Return value: component indices for downstream analysis
 
-```julia
-"""
-    SMC3ParticleState
+3. **GenParticleFilters.jl provides:**
+   - `pf_initialize`: Initialize with first observation slice
+   - `pf_update!`: Update particles with new cumulative observation slices
+   - `pf_resample!`: Resample low-weight particles when ESS drops
+   - Automatic weight management in log-space
 
-State of SMC³ particle filter at a given time step.
+**Design Pattern:** 
+- Reuse the existing `particle_filter` function by adding an overload that accepts `InferenceConfig`
+- Maintains backward compatibility with the old `ScoreΠDist` API
+- Both implementations follow the same initialization + sequential update pattern
 
-Fields:
-- particles::Vector{InferenceTrace}    : N particles, each a complete inference trace
-- weights::Vector{Float64}             : Normalized weights for each particle
-- log_evidence::Float64                : Log marginal likelihood of observations so far
-- warmstart_cache::Dict                : Q-function cache for warm starts
-- t::Int                               : Current time step
-"""
-struct SMC3ParticleState
-    particles::Vector{InferenceTrace}
-    weights::Vector{Float64}
-    log_evidence::Float64
-    warmstart_cache::Dict{UInt64, QLearner}  # hash(objective) -> Q-learner
-    t::Int
-end
-```
+### 5.2 Filter Structure
 
-### 5.3 Filter Initialization
+### 5.2 Filter Structure
 
-```julia
-"""
-    smc3_initialize(config::InferenceConfig, observations::Vector{Int}, 
-                    state_data::Matrix{Float64}, n_particles::Int)::SMC3ParticleState
+**File:** `src/inference/particle_filter.jl`
 
-Initialize SMC³ filter with n_particles.
-Each particle is an independent trace of inference_model.
-"""
-function smc3_initialize(config::InferenceConfig, observations::Vector{Int}, 
-                        state_data::Matrix{Float64}, n_particles::Int)::SMC3ParticleState
-    
-    particles = Vector{InferenceTrace}(undef, n_particles)
-    weights = ones(Float64, n_particles) / n_particles
-    
-    # Generate all particles
-    for i in 1:n_particles
-        # Trace inference_model via Gen.jl
-        trace, = Gen.generate(inference_model, 
-                            (config, observations, state_data),
-                            observations_choicemap)
-        particles[i] = trace.retval  # Extract InferenceTrace
-    end
-    
-    # Weight particles by observation likelihood
-    for i in 1:n_particles
-        weights[i] = particles[i].observation_likelihood
-    end
-    weights ./= sum(weights)  # normalize
-    
-    log_evidence = log(mean(particles[i].observation_likelihood for i in 1:n_particles))
-    
-    return SMC3ParticleState(
-        particles, weights, log_evidence,
-        Dict{UInt64, QLearner}(), 1
-    )
-end
-```
-
-### 5.4 Filter Update Step
+The implementation extends the existing `particle_filter` function with an overload for `InferenceConfig`. This maintains backward compatibility while adding support for the continuous component API:
 
 ```julia
 """
-    smc3_update!(state::SMC3ParticleState, config::InferenceConfig, 
-                observations::Vector{Int}, state_data::Matrix{Float64})
+    particle_filter(observations::Vector{Int}, config::InferenceConfig, 
+                    state_data::Matrix{Float64}, n_particles::Int = 50;
+                    ess_thresh::Float64 = 0.5, resample_alg::Symbol = :residual)
 
-Update filter with one more observation. 
-Resamples if effective sample size is low.
-Performs warm starts and iterative deepening.
+Run SMC³ particle filter with the continuous component API using `inference_model_continuous`.
+
+This overload adapts the existing particle_filter to work with InferenceConfig instead of the old ScoreΠDist.
+The key difference is that observations are passed cumulatively: at each filter step, we update particles
+with observations[1:t] rather than just the single timestep.
 """
-function smc3_update!(state::SMC3ParticleState, config::InferenceConfig, 
-                     observations::Vector{Int}, state_data::Matrix{Float64})
+function particle_filter(observations::Vector{Int}, config::InferenceConfig, 
+                        state_data::Matrix{Float64}, n_particles::Int = 50;
+                        ess_thresh::Float64 = 0.5, resample_alg::Symbol = :residual)
     
-    n_particles = length(state.particles)
-    new_weights = zeros(Float64, n_particles)
+    N = length(observations)
+    obs_choices = [choicemap((:actions => n => :aidx, observations[n])) for n in 1:N]
     
-    # ========== Phase 1: Weight Update ==========
-    # For each particle: re-learn Q-function with new observation
+    # ========== Phase 1: Initialize with first observation ==========
+    state = pf_initialize(inference_model_continuous, 
+                         (config, observations[1:1], state_data[:, 1:1]), 
+                         obs_choices[1], n_particles)
     
-    for i in 1:n_particles
-        old_trace = state.particles[i]
-        
-        # Optionally use warm start: initialize Q-function from cache
-        if config.warmstart_enabled
-            q_init = get_warmstart_qlearner(state, old_trace, config)
-        else
-            q_init = nothing
+    # ========== Phase 2: Sequential updates ==========
+    for n in 2:N
+        # Resample if ESS is low
+        if effective_sample_size(state) < ess_thresh * n_particles
+            pf_resample!(state, resample_alg)
         end
         
-        # Optionally increase iterations via iterative deepening
-        if config.iterative_deepening
-            n_iters = config.rl_config.n_iterations + (state.t - 1) * 50  # increasing
-        else
-            n_iters = config.rl_config.n_iterations
+    # ========== Phase 2: Sequential updates ==========
+    for n in 2:N
+        # Resample if ESS is low
+        if effective_sample_size(state) < ess_thresh * n_particles
+            pf_resample!(state, resample_alg)
+            
+            # Rejuvenation: use MH to refine component selections and parameters
+            # Select addresses for component sampling to allow variation
+            sels = Any[]
+            for k in 1:config.k_components
+                push!(sels, (:components => k) => :component_idx)
+                push!(sels, (:components => k) => :params)
+            end
+            
+            # Also allow recent action choices to be refined
+            a_lo = max(1, n - 3)  # refine last 3 actions
+            for τ in a_lo:(n-1)
+                push!(sels, (:actions => τ) => :aidx)
+            end
+            
+            pf_rejuvenate!(state, mh, (select(sels...),))
         end
         
-        # Re-learn Q-function with new observation included
-        q_learner = QLearner(old_trace.mdp, config.rl_config)
-        if q_init !== nothing
-            q_learner = warm_start_qlearner(q_learner, q_init)
-        end
-        
-        new_q = learn_q_function(q_learner, observations[1:state.t+1], state_data[:, 1:state.t+1], 
-                                n_iters=n_iters)
-        
-        # Update policy with new Q-function
-        new_policy = make_boltzmann_policy(new_q, config.rl_config.temperature)
-        
-        # Evaluate new likelihood
-        new_log_lik = 0.0
-        for (t, obs_action) in enumerate(observations[1:state.t+1])
-            state_t = state_data[:, t]
-            action_dist = new_policy(state_t)
-            new_log_lik += logpdf(action_dist, obs_action)
-        end
-        new_likelihood = exp(new_log_lik)
-        
-        # Update particle
-        new_trace = InferenceTrace(
-            old_trace.component_types,
-            old_trace.component_params,
-            old_trace.components,
-            old_trace.objective,
-            old_trace.mdp,
-            new_q,
-            new_policy,
-            new_likelihood
-        )
-        state.particles[i] = new_trace
-        new_weights[i] = new_likelihood
-    end
-    
-    # ========== Phase 2: Weight Normalization ==========
-    new_weights ./= sum(new_weights)
-    state.weights .= new_weights
-    
-    # ========== Phase 3: Resample if ESS Low ==========
-    ess = 1 / sum(w^2 for w in state.weights)
-    ess_threshold = 0.5 * n_particles
-    
-    if ess < ess_threshold
-        # Resample particles
-        indices = sample(1:n_particles, Weights(state.weights), n_particles, replace=true)
-        state.particles .= state.particles[indices]
-        state.weights .= ones(n_particles) / n_particles
-        
-        # Cache Q-learners for warm start
-        for i in 1:n_particles
-            cache_key = hash(state.particles[i].objective)
-            state.warmstart_cache[cache_key] = state.particles[i].q_function
-        end
-    end
-    
-    # ========== Phase 4: Update Evidence ==========
-    mean_likelihood = mean(state.particles[i].observation_likelihood for i in 1:n_particles)
-    state.log_evidence += log(mean_likelihood)
-    
-    # ========== Phase 5: Increment Time ==========
-    state.t += 1
-end
-```
-
-### 5.5 Warm Start Mechanism
-
-```julia
-"""
-    get_warmstart_qlearner(state::SMC3ParticleState, particle::InferenceTrace, 
-                          config::InferenceConfig)::Union{QLearner, Nothing}
-
-Retrieve warm-start Q-learner from cache if available.
-Similarity metric: Euclidean distance in component parameter space.
-"""
-function get_warmstart_qlearner(state::SMC3ParticleState, particle::InferenceTrace, 
-                               config::InferenceConfig)::Union{QLearner, Nothing}
-    
-    if isempty(state.warmstart_cache)
-        return nothing
-    end
-    
-    # Find most similar particle in cache (by component parameters)
-    particle_param_vec = param_vector(particle)
-    best_key = nothing
-    best_dist = Inf
-    
-    for cached_key in keys(state.warmstart_cache)
-        # (In practice, store mapping from cache key to particle params)
-        # Here: simplification - return first cached Q-learner
-        best_key = cached_key
-        break
-    end
-    
-    if best_key !== nothing
-        return state.warmstart_cache[best_key]
-    else
-        return nothing
-    end
-end
-
-"""
-    warm_start_qlearner(new_learner::QLearner, warm_start_learner::QLearner)::QLearner
-
-Initialize new Q-learner with Q-values from warm_start_learner.
-"""
-function warm_start_qlearner(new_learner::QLearner, warm_start_learner::QLearner)::QLearner
-    # Copy Q-function values from warm_start_learner to new_learner
-    # (Implementation depends on QLearner internals from Crux.jl)
-    return new_learner
-end
-```
-
-### 5.6 Iterative Deepening Strategy
-
-Iterative deepening increases SoftQ iterations as filter progresses, allowing:
-- Early timesteps: quick approximate Q-functions
-- Later timesteps: refined Q-functions for better discrimination
-
-```julia
-function compute_deepening_iterations(base_n_iters::Int, t::Int, T::Int)::Int
-    # Linear schedule: start at base_n_iters, increase to 2*base_n_iters by end
-    return base_n_iters + round(Int, (t - 1) / (T - 1) * base_n_iters)
-end
-
-# Usage in smc3_update!:
-# n_iters_t = compute_deepening_iterations(config.rl_config.n_iterations, state.t, length(observations))
-```
-
-### 5.7 Main Filter Loop
-
-```julia
-"""
-    run_smc3_filter(config::InferenceConfig, observations::Vector{Int}, 
-                   state_data::Matrix{Float64}, n_particles::Int = 50)::SMC3ParticleState
-
-Run complete SMC³ filter over all observations.
-Returns final particle state.
-"""
-function run_smc3_filter(config::InferenceConfig, observations::Vector{Int}, 
-                        state_data::Matrix{Float64}, n_particles::Int = 50)::SMC3ParticleState
-    
-    state = smc3_initialize(config, observations, state_data, n_particles)
-    
-    for t in 2:length(observations)
-        smc3_update!(state, config, observations, state_data)
+        # Update with cumulative observations up to timestep n
+        pf_update!(state,
+                   (config, observations[1:n], state_data[:, 1:n]),
+                   (NoChange(), UnknownChange(), UnknownChange()),
+                   obs_choices[n])
     end
     
     return state
 end
 ```
 
-### 5.8 Key Differences from Old Approach
+**Rejuvenation Details:**
 
-| Aspect | Old (Basic SMC) | New (SMC³) |
-|--------|-----------------|-----------|
-| **Particle Contents** | Hardcoded fourier/rbf indices | Complete inference traces (components + Q-functions + policies) |
-| **Component Types** | Fixed (Fourier, RBF) | Extensible via registry |
-| **Parameter Space** | Discrete indices | Continuous multivariate |
-| **Q-Learning** | Separate offline phase, applied post-filter | Integrated per particle at each update step |
-| **Warm Starts** | Not implemented | Cache similar Q-functions and reuse |
-| **Iterative Deepening** | Not implemented | Increase SoftQ iterations as filter progresses |
-| **Likelihood Calculation** | Fixed policy evaluation | Uses learned Boltzmann policy from Q-function |
-| **Policy Learning** | SoftQ-learn applied once | SoftQ-learn applied per particle per timestep |
+After resampling, the filter performs **Metropolis-Hastings (MH) rejuvenation** to increase particle diversity:
+
+1. **Component Rejuvenation:** 
+   - Proposes new component selections (indices) and parameters for each of the K components
+   - Allows particles to explore different component configurations given the observations so far
+   - Helps escape local optima where all particles converged to the same components
+
+2. **Recent Action Refinement:**
+   - Refines the last 3 actions taken (backward from current timestep)
+   - Allows particles to reconsider recent decisions in light of current information
+   - Particularly useful when early action choices interact with later observations
+
+3. **MH Acceptance:** 
+   - Proposals are accepted/rejected based on Metropolis-Hastings acceptance probability
+   - Maintains proper particle weighting despite changes to trace
+   - Automatically handles trace probability changes from reweighting
+
+### 5.3 Particle Information Extraction
+
+```julia
+"""
+    extract_particle_component_info(trace::Dict, config::InferenceConfig, 
+                                    component_fields::Vector)
+
+Extract component selections and parameters from a particle's trace.
+
+Returns (component_idxs, component_params):
+- component_idxs::Vector{Int} - Selected component type for each of K components
+- component_params::Vector{Dict} - Parameter dictionaries for each component
+"""
+function extract_particle_component_info(trace::Dict, config::InferenceConfig,
+                                        component_fields::Vector)
+    component_idxs = Vector{Int}(undef, config.k_components)
+    component_params = Vector{Dict}(undef, config.k_components)
+    
+    for k in 1:config.k_components
+        # Access trace addresses set by inference_model_continuous
+        component_idxs[k] = trace[:components => k => 1]
+        component_params[k] = trace[:components => k => 2]
+    end
+    
+    return (component_idxs, component_params)
+end
+
+"""
+    best_particle(pf_state, config::InferenceConfig, component_fields::Vector)
+
+Return the highest-weight particle and its component information.
+
+Returns (best_idx, best_weight, component_idxs, component_params, objective_fn)
+"""
+function best_particle(pf_state, config::InferenceConfig, component_fields::Vector)
+    # Get particle traces and weights from GenParticleFilters state
+    traces = [pf_state.traces[i] for i in 1:length(pf_state.traces)]
+    weights = pf_state.log_weights
+    
+    # Find best particle (highest log-weight)
+    best_idx = argmax(weights)
+    best_trace = traces[best_idx]
+    best_weight = exp(weights[best_idx])
+    
+    (idxs, params) = extract_particle_component_info(best_trace, config, component_fields)
+    
+    # Reconstruct objective from best particle's components
+    components = [Priors.make_component(typeof(component_fields[idx]), p)
+                 for (idx, p) in zip(idxs, params)]
+    objective_fn(x, y) = sum(c(x, y) for c in components)
+    
+    return (best_idx, best_weight, idxs, params, objective_fn)
+end
+```
+
+### 5.4 Implementation Tasks
+
+**Task 5.1: Create smc3_filter.jl module**
+- Import GenParticleFilters
+- Implement run_smc3_filter function using pf_initialize, pf_update!, pf_resample!
+- Implement particle extraction utilities: extract_particle_component_info, best_particle
+- Export public functions
+
+**Task 5.2: Implement run_smc3_filter**
+- Pre-build component infrastructure (component_switch, component_type_sampler) outside filter
+- Create model wrapper function with iterative deepening support
+- Call pf_initialize with first observation
+- Loop over remaining observations calling pf_update!
+- Perform resampling when ESS drops below threshold (0.5 * n_particles)
+
+**Task 5.3: Implement particle extraction utilities**
+- extract_particle_component_info: Extract component selections/parameters from trace
+- best_particle: Get highest-weight particle with reconstructed objective and component info
+- Provide access to GenParticleFilters state (traces, log_weights)
+
+**Task 5.4: Integration testing**
+
+### 5.5 Key Advantages of Using GenParticleFilters.jl
+
+| Feature | Benefit |
+|---------|---------|
+| **pf_initialize** | Clean initialization; handles weight computation and normalization |
+| **pf_update!** | Efficient trace updates with support for observation constraints |
+| **pf_resample!** | Multiple resampling methods (multinomial, residual, stratified) |
+| **effective_sample_size** | Built-in ESS computation; no manual weight calculations needed |
+| **pf_rejuvenate!** | Optional MH rejuvenation for particle diversity (future feature) |
+| **Standard interface** | Works with standard Gen.jl infrastructure; no custom reimplementation |
+
+### 5.6 Integration with Parts 1-4
+
+| Component | Integration Point |
+|-----------|-------------------|
+| **Part 1: Component API** | extract_particle_component_info uses component_fields and make_component |
+| **Part 2: Choice Distribution** | component_switch and component_type_sampler pre-built outside filter |
+| **Part 3: Config** | run_smc3_filter receives InferenceConfig; modified in model wrapper for deepening |
+| **Part 4: Gen Model** | inference_model_continuous wrapped in closure; called per timestep with updated observations |
+
+### 5.7 Key Differences from Old Approach
+
+| Aspect | Old (Custom SMC) | New (GenParticleFilters.jl) |
+|--------|-----------------|---------------------------|
+| **Weight Management** | Manual log-space normalization | pf_initialize, pf_update! handle automatically |
+| **Resampling Logic** | Custom ESS + multinomial resampling | Built-in effective_sample_size + multiple methods |
+| **Trace Updates** | Manual re-simulation | pf_update! with UnknownChange for full model changes |
+| **State Container** | Custom SMC3ParticleState struct | GenParticleFilters.jl ParticleFilterState |
+| **Code Complexity** | ~200 lines of custom infrastructure | ~30 lines using library abstractions |
+| **Flexibility** | Limited to pre-defined operations | Extensible: rejuvenation, custom weights, filtering |
+| **Maintenance** | Requires bug fixes, edge case handling | Maintained by Gen.jl community |
 
 ---
 
@@ -1342,46 +1222,53 @@ Update `src/Arrodes.jl` to export:
 
 **Goals:** Create unified configuration object
 
-#### 6.4.1 Implement Config Structs (0.5 days)
+#### 6.4.1 Implement RLConfig Struct (0.25 days)
 
 **File:** `src/config/inference_config.jl`
 
-- Define `ComponentRegistry` struct
-- Define `RLConfig` struct
-- Define `InferenceConfig` struct
-- Add validation in constructors
+- Define `RLConfig` struct with `@with_kw` macro
+- Fields: temperature, n_iterations, learning_rate, value_reg, n_samples_per_state
+- All fields have sensible defaults aligned with current SoftQ-learn usage
 
 **Testing:**
-- Test valid configurations
-- Test invalid configurations (reject K<1, etc.)
-- Test default parameters sensible
+- Test default RLConfig is valid
+- Test custom RLConfig with modified parameters
+- Test field access
 
 **Validation:**
-- ✅ Configurations pass validation
-- ✅ Defaults reasonable
+- ✅ Defaults align with existing usage
 - ✅ All fields accessible
 
 ---
 
-#### 6.4.2 Implement Factory Functions (0.5 days)
+#### 6.4.2 Implement InferenceConfig Struct (0.5 days)
 
-- `make_inference_config()` with sensible defaults
-- Convenience constructors for common cases
-- Metadata field for tracking experiments
+**File:** `src/config/inference_config.jl`
+
+- Define `InferenceConfig` struct with `@with_kw` macro
+- Required fields: `component_tuples`, `k_components`
+- Optional fields with defaults: `component_type_sampler`, `rl_config`, `agent_params`, `iterative_deepening`, `metadata`
+- Auto-generation of `component_type_sampler` from `component_tuples` if not provided
+- Validation: k_components >= 1, component_tuples non-empty
 
 **Testing:**
-- Test factory produces valid config
-- Test defaults match expectations
+- Test valid InferenceConfig construction
+- Test auto-generation of component_type_sampler
+- Test custom component_type_sampler override
+- Test invalid configurations rejected (empty tuples, k_components < 1)
 - Test metadata storage and retrieval
 
 **Validation:**
-- ✅ Factories work as expected
-- ✅ Configs ready to pass to inference
+- ✅ Configurations pass validation
+- ✅ Defaults reasonable
+- ✅ Auto-generation works
+- ✅ All fields accessible
 
 **Checkpoint 3 Passing Criteria:**
-- ✅ Configuration structures complete
+- ✅ Configuration structures complete (RLConfig + InferenceConfig)
+- ✅ @with_kw macros used for clean default specification
+- ✅ Auto-generation of component_type_sampler working
 - ✅ Easy to construct and use
-- ✅ All fields accessible and validated
 - ✅ Tests passing
 
 ---
@@ -1390,86 +1277,29 @@ Update `src/Arrodes.jl` to export:
 
 **Goals:** Implement Gen.jl-based probabilistic model
 
-#### 6.5.1 Implement InferenceTrace Struct (0.5 days)
+#### 6.5.1 Implement Inference Model `@gen` Function (1.5 days)
 
 **File:** `src/inference/gen_model_continuous.jl`
 
-- Define `InferenceTrace` struct
-- Add methods to extract/inspect trace contents
-- Add pretty-printing
+Implement the lean `inference_model()` function that:
+- Samples K components via `sample_component_and_params()` (traced by Gen.jl)
+- Assembles objective deterministically
+- Builds MDP and learns Q-function with fixed iterations
+- Constructs Boltzmann policy
+- Evaluates likelihood
+- Returns Float64 likelihood weight
 
-**Testing:**
-- Test trace construction
-- Test field access
-
-**Validation:**
-- ✅ Traces construct properly
-- ✅ Fields accessible
-
----
-
-#### 6.5.2 Implement Gen.jl Primitives (1 day)
-
-- Define `ComponentTypeChoiceDist <: Gen.Distribution`
-- Define `ParameterSamplingDist <: Gen.Distribution`
-- Implement Gen interface methods
-- Create wrapper `@gen` functions
-
-**Testing:**
-- Test primitives can be traced by Gen.jl
-- Test probability calculations
-- Test determinism with fixed RNG
-
-**Validation:**
-- ✅ Primitives integrate with Gen.jl
-- ✅ Traces reproducible with fixed seed
-
----
-
-#### 6.5.3 Implement Inference Model `@gen` Function (2 days)
-
-**Pseudocode:**
-```
-@gen function inference_model(config, observations, state_data)
-    # Phase 1: Sample K components
-    for k in 1:config.K
-        component_type ~ choose_component(config.choice_dist)
-        for each parameter in parameter_spec(component_type)
-            param ~ sample_param(param_dist)
-        end
-        component ~ assemble_component(component_type, params)
-    end
-    
-    # Phase 2: Construct objective
-    objective = sum(components)
-    
-    # Phase 3: Build MDP & learn Q
-    mdp = construct_mdp_from_objective(objective, state_data, config.agent_params)
-    q_function = learn_q_function(mdp, observations, config.rl_config)
-    
-    # Phase 4: Construct policy
-    policy = make_boltzmann_policy(q_function, config.rl_config.temperature)
-    
-    # Phase 5: Evaluate likelihood
-    log_likelihood = sum(logpdf(policy(state_t), obs_action) for (t, obs_action) in observations)
-    observation_likelihood = exp(log_likelihood)
-    
-    # Phase 6: Return trace
-    return InferenceTrace(component_types, component_params, components,
-                         objective, mdp, q_function, policy, observation_likelihood)
-end
-```
-
-**Key Implementation Details:**
-- Integrate with existing `construct_mdp_from_objective()` (from MuKumari)
-- Use SoftQ-learn from Crux.jl for Q-function learning
-- Make Boltzmann policy from Q-values
-- Evaluate likelihood under policy
+**Key Points:**
+- All stochasticity (component selection + parameter sampling) is traced by Gen.jl automatically
+- No InferenceTrace struct - return only the likelihood
+- No custom Gen.Distribution types needed
+- Component information stored in trace via Gen's choice address system
+- Filter reconstructs component data from trace as needed
 
 **Testing:**
 - Test on simple 2-action toy MDP
 - Test likelihood computation matches manual calculation
-- Test different component types produce different traces
+- Test different component types produce different likelihoods
 - Test Gen.jl can generate and reweight traces
 
 **Validation:**
@@ -1480,34 +1310,59 @@ end
 
 ---
 
-#### 6.5.4 Component-Specific Likelihood Methods (1 day)
+#### 6.5.2 Implement Trace Extraction Utilities (1 day)
 
-Implement `likelihood_component_contribution()` for Fourier and RBF:
+**File:** `src/inference/gen_model_continuous.jl`
 
-**For RandomFourierField:**
-- May weight likelihood by component frequency (high-frequency components more uncertain)
-- May include regularization on amplitude
+Implement helper functions for particle filter to extract information from traces:
 
-**For RadialBasisField:**
-- May weight by Gaussian width (narrow RBFs more certain about localized regions)
-- May include regularization on strength
+```julia
+function extract_component_info(trace, config, component_fields)
+    component_idxs = [trace[:sample_component_and_params => k => 1] 
+                      for k in 1:config.k_components]
+    component_params = [trace[:sample_component_and_params => k => 2] 
+                       for k in 1:config.k_components]
+    return (component_idxs, component_params)
+end
+
+function reconstruct_objective_from_trace(trace, config, component_fields)
+    (idxs, params) = extract_component_info(trace, config, component_fields)
+    components = [make_component(typeof(component_fields[idx]), p)
+                 for (idx, p) in zip(idxs, params)]
+    return (x, y) -> sum(c(x, y) for c in components)
+end
+```
 
 **Testing:**
-- Unit tests for each component type
-- Verify likelihoods reasonable
-- Test that different components produce different likelihoods
+- Test extraction from generated traces
+- Test reconstructed objectives match original
 
 **Validation:**
-- ✅ Likelihoods computed correctly per type
-- ✅ Reasonable values (in [0,1] after normalization)
+- ✅ Can extract all component information from traces
+- ✅ Reconstructed objectives accurate
+
+---
+
+#### 6.5.3 Integration Testing (0.75 days)
+
+- Test full @gen function with Part 2 infrastructure
+- Test trace generation and reweighting with Gen.jl
+- Test with different component type combinations
+- Test likelihood computation consistency
+
+**Validation:**
+- ✅ Model integrates with Part 2 components
+- ✅ Gen.jl operations work correctly
+- ✅ Traces contain all necessary information
 
 **Checkpoint 4 Passing Criteria:**
-- ✅ Generative model fully implemented
-- ✅ Gen.jl integration working
-- ✅ Q-function learning integrated
-- ✅ Likelihood evaluation working
+- ✅ Lean @gen function fully implemented
+- ✅ Returns only likelihood as Float64
+- ✅ Gen.jl traces all stochasticity
+- ✅ No InferenceTrace struct needed
+- ✅ No custom Gen.Distribution types
+- ✅ Trace extraction utilities working
 - ✅ Tests passing with realistic scenarios
-- ✅ Can trace and weight particles properly
 
 ---
 
@@ -1519,7 +1374,7 @@ Implement `likelihood_component_contribution()` for Fourier and RBF:
 
 **File:** `src/inference/smc3_filter.jl`
 
-- Define `SMC3ParticleState` struct
+- Define `SMC3ParticleState` struct (without warmstart_cache)
 - Implement `smc3_initialize()` function
 - Add methods to query particle state (best particle, log evidence, etc.)
 
@@ -1541,59 +1396,36 @@ Implement `likelihood_component_contribution()` for Fourier and RBF:
 - For each particle: re-learn Q with new observation
 - Update weights based on new likelihood
 - Perform resampling if ESS low
-- Cache Q-functions for warm start
+- Integrate iterative deepening (increase iterations over time)
 
 **Key Details:**
 - Use observation choicemap to constrain inference
 - Re-trace inference model with new observations
 - Update Q-functions efficiently
 - Implement effective sample size check
+- If iterative_deepening enabled, increase n_iters based on timestep
 
 **Testing:**
 - Test on toy 2-action problem with synthetic observations
 - Test weights update correctly
 - Test resampling when ESS drops
 - Test state transitions are valid
+- Test iteration count increases when iterative_deepening=true
 
 **Validation:**
 - ✅ Update produces valid new state
 - ✅ Weights change reasonably with new observations
 - ✅ ESS computation correct
 - ✅ Resampling preserves high-weight particles
+- ✅ Iterative deepening schedule increases smoothly
 
 ---
 
-#### 6.6.3 Implement Warm Starts (1 day)
-
-- Implement `get_warmstart_qlearner()` function
-- Cache Q-learners from resampled particles
-- Implement similarity metric for particle matching (Euclidean in param space)
-- Implement `warm_start_qlearner()` to initialize from cache
-
-**Key Details:**
-- Hash objective functions for cache key
-- Store mapping from cache key to component parameters
-- Similarity threshold for matching
-- Graceful fallback if no good match
-
-**Testing:**
-- Test similar particles get matched
-- Test Q-function initialization from warm start
-- Test convergence faster with warm start than without
-- A/B test: warm start vs. cold start on same observation sequence
-
-**Validation:**
-- ✅ Warm start initialization works
-- ✅ Similarity matching reasonable
-- ✅ Performance improvement measurable
-
----
-
-#### 6.6.4 Implement Iterative Deepening (0.5 days)
+#### 6.6.3 Implement Iterative Deepening (0.5 days)
 
 - Implement `compute_deepening_iterations()` function
 - Integrate into `smc3_update!()` to increase iterations over time
-- Linear schedule: start at `base_n_iters`, increase to `2 * base_n_iters`
+- Linear schedule: start at `base_n_iters`, increase over filter steps
 
 **Testing:**
 - Test iteration count increases properly
@@ -1606,7 +1438,7 @@ Implement `likelihood_component_contribution()` for Fourier and RBF:
 
 ---
 
-#### 6.6.5 Implement Main Filter Loop (0.5 days)
+#### 6.6.4 Implement Main Filter Loop (0.5 days)
 
 - Implement `run_smc3_filter()` function
 - Loop over all observations, calling update at each step
@@ -1624,7 +1456,7 @@ Implement `likelihood_component_contribution()` for Fourier and RBF:
 
 ---
 
-#### 6.6.6 Integrate with Existing Code (1 day)
+#### 6.6.5 Integrate with Existing Code (1 day)
 
 - Connect to `construct_mdp_from_objective()` (MuKumari)
 - Connect to SoftQ-learn (Crux.jl)
@@ -1642,10 +1474,9 @@ Implement `likelihood_component_contribution()` for Fourier and RBF:
 
 **Checkpoint 5 Passing Criteria:**
 - ✅ SMC³ particle filter fully implemented
-- ✅ Warm starts working
 - ✅ Iterative deepening working
 - ✅ End-to-end tests passing
-- ✅ Performance improvements from warm starts visible
+- ✅ Iteration schedule correctly increasing over filter steps
 - ✅ Ready for integration with ablation studies
 
 ---
@@ -1877,11 +1708,11 @@ Implement `likelihood_component_contribution()` for Fourier and RBF:
 | 0 | Setup & Refactoring | 0.5 days | Planning |
 | 1 | Component Type API | 2.5 days | Planning |
 | 2 | Component Choice Distribution | 2 days | Planning |
-| 3 | Configuration Structure | 1 day | Planning |
-| 4 | Generative Inference Model | 4.5 days | Planning |
-| 5 | SMC³ Particle Filter | 4.5 days | Planning |
+| 3 | Configuration Structure | 0.75 days | Planning |
+| 4 | Generative Inference Model | 3.25 days | Planning |
+| 5 | SMC³ Particle Filter | 3.5 days | Planning |
 | 6 | Migration & Validation | 5 days | Planning |
-| **Total** | | **20 days** | **Planning** |
+| **Total** | | **17.5 days** | **Planning** |
 
 ### 9.2 Implementation Order
 
@@ -1893,9 +1724,16 @@ Implement `likelihood_component_contribution()` for Fourier and RBF:
 
 ### 9.3 Critical Path
 
-Phases 0 → 1 → 4 → 5 → 6 are on critical path (~15 days)
+Phases 0 → 1 → 4 → 5 → 6 are on critical path (~13.75 days)
 
 Phases 2-3 can absorb schedule slack.
+
+**Key Reductions:**
+- Removed InferenceTrace struct: -0.5 days (no separate type definition needed)
+- Eliminated custom Gen.Distribution types: -1 day (use existing Part 2 infrastructure)
+- Eliminated component-specific likelihood methods: -1 day (not needed for simple weighting)
+- **Phase 4 reduction: 4.5 → 3.25 days (28% improvement)**
+- Overall: 18.75 → 17.5 days
 
 ### 9.4 Testing Schedule
 
@@ -1916,9 +1754,9 @@ src/priors/component_api.jl                    (~200 lines)
 src/priors/fourier_continuous.jl               (~150 lines)
 src/priors/rbf_continuous.jl                   (~150 lines)
 src/priors/component_choice_dist.jl            (~120 lines)
-src/config/inference_config.jl                 (~100 lines)
+src/config/inference_config.jl                 (~80 lines)
 src/inference/gen_model_continuous.jl          (~300 lines)
-src/inference/smc3_filter.jl                   (~400 lines)
+src/inference/smc3_filter.jl                   (~350 lines)
 ```
 
 **Archive (Old Code):**
@@ -1963,12 +1801,20 @@ examples/basic_usage.ipynb                     (Jupyter notebook)
 
 ### 10.3 Code Statistics
 
-**New Code:** ~1,500 lines  
+**New Code:** ~1,200 lines (eliminated InferenceTrace, custom distributions, component-specific methods)
 **Modified Code:** ~200 lines (existing files)  
 **Archived Code:** ~1,000 lines (preserved for reference)  
-**Test Code:** ~1,600 lines  
+**Test Code:** ~1,400 lines (streamlined Phase 4 tests, removed distribution tests)
 **Documentation:** ~700 lines  
-**Total New Deliverables:** ~5,600 lines
+**Total New Deliverables:** ~5,100 lines
+
+**Key Changes from Original Estimate:**
+- Removed InferenceTrace struct: -80 lines
+- Eliminated custom Gen.Distribution types: -150 lines
+- Eliminated component-specific likelihood methods: -80 lines
+- Removed related tests: -150 lines
+- Simplified trace extraction utilities: -40 lines net
+- Overall reduction: ~500 lines of code and complexity
 
 ---
 

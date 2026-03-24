@@ -5,24 +5,6 @@
 ################################################################################
 
 """
-    RandomFourierField <: ComponentField
-
-A continuous Fourier component field type for the new ComponentField API.
-
-Represents sinusoidal component objectives with configurable continuous parameter
-distributions. Replaces the old discrete implementation using Gen.jl for
-probabilistic parameter sampling.
-
-Parameters:
-- `amplitude_max::Float64`: Maximum amplitude for uniform sampling [0, amplitude_max]
-- `freq_max::Float64`: Maximum frequency for uniform sampling [0, freq_max]
-"""
-@with_kw struct RandomFourierField <: ComponentField
-    amplitude_max::Float64 = 10.0
-    freq_max::Float64 = π
-end
-
-"""
     component_type(::RandomFourierField)
 
 Return the identifier for this component type.

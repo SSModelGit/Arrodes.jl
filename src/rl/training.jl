@@ -220,3 +220,47 @@ function ensure_policy_trained_to!(π_dist::ScoreΠDist, key, agent_params::Dict
 
     return π
 end
+
+"""
+    train_component_model_softq(mdp::KAgentPOMDP, config::RLConfig)
+
+Learn SoftQ policy for given component objective using the RLConfig hyperparameters.
+
+Args:
+- `mdp::KAgentPOMDP`
+- `config::RLConfig`
+
+Returns:
+- `solver::SoftQ`: The trained SoftQ solver object containing learning history
+- `policy::Policy`: The resulting policy π obtained from solving the MDP
+"""
+function train_component_model_softq(mdp::KAgentPOMDP, config::RLConfig)
+    # Construct SoftQ solver using deep_q_solver with parameters from RLConfig
+    solver = deep_q_solver(mdp; solver_params=[:softq,
+                                               config.n_iterations,
+                                               config.epochs,
+                                               config.batch_size])
+    
+    # Train the policy by solving the MDP with the SoftQ solver
+    policy = solve(solver, mdp)
+    
+    return solver, policy
+end
+
+"""
+    train_component_model_softq(mdp::KAgentPOMDP, config::InferenceConfig)
+
+Learn SoftQ policy for given component objective directly using InferenceConfig.
+
+Convenience method that extracts the RLConfig from an InferenceConfig structure.
+
+Arguments:
+- `mdp::KAgentPOMDP`
+- `config::InferenceConfig`
+
+Returns:
+- Tuple of (solver, policy) same as single-argument version
+"""
+function train_component_model_softq(mdp::KAgentPOMDP, config::InferenceConfig)
+    return train_component_model_softq(mdp, config.rl_config)
+end
