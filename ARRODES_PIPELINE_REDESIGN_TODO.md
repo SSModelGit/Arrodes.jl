@@ -407,123 +407,89 @@ end
 
 ## Part 2: Component Choice Distribution
 
-### 2.1 Conceptual Foundation
+The **component choice distribution** specifies the likelihood of selecting each component field at each position in the K-component objective sum.
 
-The **component choice distribution** specifies the likelihood of selecting each component type at each position in the K-component objective sum.
+To avoid Gen.jl's multi-dispatch limitations with `@gen` functions, component choice is implemented via the **Switch combinator**, which routes to type-specific parameter sampling functions based on the selected component index.
 
-In the simplest case: equal probability for each registered component type.  
-In general: user-defined function mapping component type registry to probability distribution.
+### 2.1 Architecture
 
-This distribution is sampled K times in the generative inference model (§4), each sample determining one of the K component objectives.
+**User-provided tuples:** Users provide `(ComponentField_instance, sampling_function)` pairs.
 
-### 2.2 Choice Distribution Design
+**Example:**
+```julia
+component_tuples = [
+    (RandomFourierField(), sample_fourier_params),
+    (RadialBasisField(), sample_rbf_params)
+]
+```
 
-**File:** `src/priors/component_choice_dist.jl`
+### 2.2 Core Functions
+
+**File:** `src/priors/Priors.jl`
+
+#### `build_component_param_switch(component_tuples::Vector{Tuple})`
+
+Constructs a `Gen.Switch` combinator from component tuples.
 
 ```julia
-"""
-    ComponentChoiceDistribution
-
-Specifies the probability of selecting each registered component type.
-Can be:
-- UniformChoiceDistribution: equal probability for all types
-- WeightedChoiceDistribution: user-provided weights
-- CustomChoiceDistribution: user-provided probability function
-"""
-abstract type AbstractComponentChoiceDistribution end
-
-struct UniformComponentChoiceDistribution <: AbstractComponentChoiceDistribution
-    component_types::Vector{Type{<:ComponentField}}
-end
-
-struct WeightedComponentChoiceDistribution <: AbstractComponentChoiceDistribution
-    component_types::Vector{Type{<:ComponentField}}
-    weights::Vector{Float64}  # must sum to 1
-end
-
-struct CustomComponentChoiceDistribution <: AbstractComponentChoiceDistribution
-    component_types::Vector{Type{<:ComponentField}}
-    prob_fn::Function  # (component_type_idx) -> Float64 (unnormalized weight)
+function build_component_param_switch(component_tuples::Vector{Tuple})
+    component_fields = [t[1] for t in component_tuples]
+    param_sampling_fns = [t[2] for t in component_tuples]
+    param_switch = Gen.Switch(param_sampling_fns...)
+    return (param_switch, component_fields)
 end
 ```
 
-### 2.3 Sampling from Choice Distribution
+Returns: `(param_switch, component_fields)` where `param_switch` routes indices to parameter sampling functions.
+
+#### `component_type_sampler(component_fields::Vector)`
+
+Creates a uniform categorical sampler over component indices.
 
 ```julia
-"""
-    sample_component_type(dist::AbstractComponentChoiceDistribution, rng) -> Type{<:ComponentField}
-
-Sample a component type from the choice distribution.
-"""
-function sample_component_type(dist::UniformComponentChoiceDistribution, rng::AbstractRNG)
-    idx = rand(rng, 1:length(dist.component_types))
-    return dist.component_types[idx]
-end
-
-function sample_component_type(dist::WeightedComponentChoiceDistribution, rng::AbstractRNG)
-    idx = sample(rng, 1:length(dist.component_types); weights=dist.weights)
-    return dist.component_types[idx]
-end
-
-function sample_component_type(dist::CustomComponentChoiceDistribution, rng::AbstractRNG)
-    weights = [dist.prob_fn(i) for i in 1:length(dist.component_types)]
-    weights ./= sum(weights)  # normalize
-    idx = sample(rng, 1:length(dist.component_types); weights=weights)
-    return dist.component_types[idx]
+function component_type_sampler(component_fields::Vector)
+    Gen.@gen function sample_component_type(c_fields::Vector=component_fields)
+        component_idx ~ Gen.categorical(normalize(ones(length(c_fields)), 1))
+        return component_idx  # Return index for Switch routing
+    end
+    return sample_component_type
 end
 ```
 
-### 2.4 Factory Functions
+#### `sample_component_and_params(component_switch, component_type_sampler)`
+
+Combined `@gen` function that selects component type and samples parameters.
 
 ```julia
-"""
-    make_uniform_choice_dist(component_types::Vector{Type}) -> UniformComponentChoiceDistribution
-
-Create uniform probability distribution over all component types.
-"""
-function make_uniform_choice_dist(component_types::Vector{Type{<:ComponentField}})
-    return UniformComponentChoiceDistribution(component_types)
-end
-
-"""
-    make_weighted_choice_dist(component_types::Vector{Type}, weights::Vector{Float64}) -> WeightedComponentChoiceDistribution
-
-Create weighted probability distribution. Weights automatically normalized.
-"""
-function make_weighted_choice_dist(component_types::Vector{Type{<:ComponentField}}, weights::Vector{Float64})
-    @assert length(component_types) == length(weights)
-    weights_normalized = weights ./ sum(weights)
-    return WeightedComponentChoiceDistribution(component_types, weights_normalized)
-end
-
-"""
-    make_custom_choice_dist(component_types::Vector{Type}, prob_fn::Function) -> CustomComponentChoiceDistribution
-
-Create custom probability distribution via user function.
-prob_fn should take component type index and return unnormalized weight.
-"""
-function make_custom_choice_dist(component_types::Vector{Type{<:ComponentField}}, prob_fn::Function)
-    return CustomComponentChoiceDistribution(component_types, prob_fn)
+Gen.@gen function sample_component_and_params(component_switch::Gen.Switch,
+                                              component_type_sampler::Function)
+    component_idx ~ component_type_sampler()
+    params ~ component_switch(component_idx)
+    return (component_idx, params)
 end
 ```
 
-### 2.5 Integration with Gen.jl
+Returns: `(component_idx, params_dict)` for lookup and use.
 
-In the generative inference model (§4), the choice distribution is sampled K times:
+### 2.3 Usage Pattern
 
 ```julia
-# Pseudo-code in generative model
-for k in 1:K
-    component_type ~ sample_component_type(config.choice_dist, rng)
-    parameters ~ sample_parameters(component_type, rng, parameter_spec(component_type))
-    component ~ assemble_component(component_type, parameters)
-    objective_sum += component
-end
+# Build infrastructure
+(param_switch, component_fields) = build_component_param_switch(component_tuples)
+type_sampler = component_type_sampler(component_fields)
+
+# Sample in inference model
+component_idx, params ~ sample_component_and_params(param_switch, type_sampler)
+component_field = component_fields[component_idx]
+component_fn = make_component(typeof(component_field), params)
 ```
 
-This enables composable, extensible component mixture models.
+### 2.4 Key Design Decisions
 
----
+- **Switch combinator:** Routes based on index, avoiding multi-dispatch issues with `@gen`
+- **Distinct function names:** `sample_fourier_params`, `sample_rbf_params` prevent naming conflicts
+- **User-provided tuples:** Explicit pairing of instances with their sampling functions
+- **Full tracing:** Both component selection and parameter sampling are traced for particle filtering
 
 ## Part 3: Configuration Structure
 

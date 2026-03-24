@@ -23,22 +23,22 @@ Parameters:
 end
 
 """
-    component_type(::Type{RandomFourierField})::String
+    component_type(::RandomFourierField)
 
 Return the identifier for this component type.
 """
-function component_type(::Type{RandomFourierField})::String
+function component_type(::RandomFourierField)
     return "Fourier"
 end
 
 """
-    sample_component_params(field::RandomFourierField)
+    sample_fourier_params(field::RandomFourierField)
 
 Sample Fourier parameters using specific bounds from field instance.
 
 Allows customization of parameter bounds per component type instance.
 """
-@gen function sample_component_params(field::RandomFourierField)
+Gen.@gen function sample_fourier_params(field::RandomFourierField)
     amplitude ~ Gen.uniform(0, field.amplitude_max)
     frequency ~ Gen.uniform(0, field.freq_max)
     phase ~ Gen.uniform(0, 2π)
@@ -51,7 +51,7 @@ Allows customization of parameter bounds per component type instance.
 end
 
 """
-    make_component(::Type{RandomFourierField}, params::Dict{String, Any})::Function
+    make_component(::RandomFourierField, params::Dict{String, Any})
 
 Construct a Fourier scalar field from sampled parameters.
 
@@ -66,7 +66,7 @@ continuous parameters sampled via Gen.jl instead of discretized bins.
 # Returns
 - `Function`: Scalar field f(x::Real, y::Real)::Float64
 """
-function make_component(::Type{RandomFourierField}, params::Dict{String, Any})::Function
+function make_component(::RandomFourierField, params::Dict{String, Any})
     A = params["amplitude"]
     f = params["frequency"]
     φ = params["phase"]
@@ -80,11 +80,11 @@ function make_component(::Type{RandomFourierField}, params::Dict{String, Any})::
 end
 
 """
-    describe_component_params(::Type{RandomFourierField})::String
+    describe_component_params(::RandomFourierField)
 
 Return documentation for Fourier component parameters.
 """
-function describe_component_params(::Type{RandomFourierField})::String
+function describe_component_params(::RandomFourierField)
     return """
     Component Field Type: Fourier (RandomFourierField)
     Description: Continuous sinusoidal field (replacing old discretized approach)

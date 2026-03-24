@@ -33,16 +33,16 @@ Parameters stored in struct to shape the distributions:
 end
 
 """
-    component_type(::Type{RadialBasisField})::String
+    component_type(::RadialBasisField)
 
 Return the identifier for this component type.
 """
-function component_type(::Type{RadialBasisField})::String
+function component_type(::RadialBasisField)
     return "RBF"
 end
 
 """
-    sample_component_params(field::RadialBasisField)
+    sample_rbf_params(field::RadialBasisField)
 
 Sample RBF parameters using specific bounds from field instance via Gen.jl.
 
@@ -50,7 +50,7 @@ Uses Gen's lowercase distribution functions for continuous parameter sampling,
 replacing the old discrete bin-based approach while maintaining the ability to
 sample center coordinates and amplitude.
 """
-@gen function sample_component_params(field::RadialBasisField)
+Gen.@gen function sample_rbf_params(field::RadialBasisField)
     center_x ~ Gen.uniform(field.x_min, field.x_max)
     center_y ~ Gen.uniform(field.y_min, field.y_max)
     amplitude ~ Gen.uniform(field.amp_min, field.amp_max)
@@ -64,7 +64,7 @@ sample center coordinates and amplitude.
 end
 
 """
-    make_component(::Type{RadialBasisField}, params::Dict{String, Any})::Function
+    make_component(::RadialBasisField, params::Dict{String, Any})
 
 Construct an RBF scalar field from sampled parameters.
 
@@ -80,7 +80,7 @@ continuous parameters sampled via Gen.jl instead of discretized bins.
 # Returns
 - `Function`: Scalar field f(x::Real, y::Real)::Float64
 """
-function make_component(::Type{RadialBasisField}, params::Dict{String, Any})::Function
+function make_component(::RadialBasisField, params::Dict{String, Any})
     cx = params["center_x"]
     cy = params["center_y"]
     A = params["amplitude"]
@@ -100,11 +100,11 @@ function make_component(::Type{RadialBasisField}, params::Dict{String, Any})::Fu
 end
 
 """
-    describe_component_params(::Type{RadialBasisField})::String
+    describe_component_params(::RadialBasisField)
 
 Return documentation for RBF component parameters.
 """
-function describe_component_params(::Type{RadialBasisField})::String
+function describe_component_params(::RadialBasisField)
     return """
     Component Field Type: RBF (RadialBasisField)
     Description: Continuous Gaussian RBF field (replacing old discretized approach)
