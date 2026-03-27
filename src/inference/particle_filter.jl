@@ -82,12 +82,15 @@ function particle_filter(observations::Vector{Int}, config::InferenceConfig,
                         ess_thresh::Float64 = 0.5, resample_alg::Symbol = :residual)
     
     N = length(observations)
-    obs_choices = [choicemap((:actions => n => :aidx, observations[n])) for n in 1:N]
+    obs_choices = [choicemap((n => :aidx, observations[n])) for n in 1:N]
+    
+    # Create a ScoreΠDist to cache trained solvers and policies across particles
+    π_dist = ScoreΠDist()
     
     # ========== Phase 1: Initialize with first observation ==========
     # Note: inference_model_continuous takes cumulative observations[1:t]
     state = pf_initialize(inference_model_continuous, 
-                         (config, observations[1:1], state_data[:, 1:1]), 
+                         (config, observations[1:1], state_data[:, 1:1], π_dist), 
                          obs_choices[1], n_particles)
     
     # ========== Phase 2: Sequential updates ==========
@@ -103,14 +106,14 @@ function particle_filter(observations::Vector{Int}, config::InferenceConfig,
                 # sample_component_and_params is a @gen function with internal traces:
                 # - component_idx from component_type_sampler()
                 # - params from component_switch(component_idx)
-                push!(sels, (:components => k) => :component_idx)
-                push!(sels, (:components => k) => :params)
+                push!(sels, k => :component)
+                push!(sels, k => :component)
             end
             
             # Also allow recent action choices to be refined
             a_lo = max(1, n - 3)  # refine last 3 actions
             for τ in a_lo:(n-1)
-                push!(sels, (:actions => τ))
+                push!(sels, (τ => :aidx))
             end
             
             pf_rejuvenate!(state, mh, (select(sels...),))
@@ -118,8 +121,8 @@ function particle_filter(observations::Vector{Int}, config::InferenceConfig,
         
         # Update with cumulative observations up to timestep n
         pf_update!(state,
-                   (config, observations[1:n], state_data[:, 1:n]),
-                   (NoChange(), UnknownChange(), UnknownChange()),
+                   (config, observations[1:n], state_data[:, 1:n], π_dist),
+                   (NoChange(), UnknownChange(), UnknownChange(), NoChange()),
                    obs_choices[n])
     end
     
@@ -148,9 +151,10 @@ function extract_particle_component_info(trace::Dict, config::InferenceConfig,
     
     for k in 1:config.k_components
         # Access trace addresses set by inference_model_continuous
-        # trace[:components => k] contains (component_idx, params_dict)
-        component_idxs[k] = trace[:components => k => 1]
-        component_params[k] = trace[:components => k => 2]
+        # trace[k => :component] returns tuple (idx, params) from sample_component_and_params
+        idx, params = trace[k => :component]
+        component_idxs[k] = idx
+        component_params[k] = params
     end
     
     return (component_idxs, component_params)

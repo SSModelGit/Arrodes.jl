@@ -264,3 +264,9 @@ Returns:
 function train_component_model_softq(mdp::KAgentPOMDP, config::InferenceConfig)
     return train_component_model_softq(mdp, config.rl_config)
 end
+
+function get_𝒮_proposal(π_dist::ScoreΠDist, key, mdp::Any, config::InferenceConfig)
+    return get!(π_dist.n_𝒮_proposals, key) do
+        train_component_model_softq(mdp, config)
+    end
+end
