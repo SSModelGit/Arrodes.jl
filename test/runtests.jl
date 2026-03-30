@@ -4,9 +4,4 @@ using Test
 # packages used across MULTIPLE test files
 using Gen
 
-include("test_types.jl")
-include("test_utils.jl")
-include("test_fields.jl")
-include("test_filter.jl")
-include("test_analysis.jl")
-include("test_rl.jl")
+include("test_default_inference_pipeline.jl")
