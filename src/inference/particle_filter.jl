@@ -1,7 +1,10 @@
 """
     particle_filter(observations::Vector{Int}, config::InferenceConfig, 
                     state_data::Matrix{Float64}, n_particles::Int = 50;
-                    ess_thresh::Float64 = 0.5, resample_alg::Symbol = :residual)
+                    ess_thresh::Float64 = 0.5, resample_alg::Symbol = :residual,
+                    animate_filter_behavior::Bool = false, true_objective_fn::Function = nothing,
+                    mdp::KAgentPOMDP = nothing, agent_params::Dict = Dict(),
+                    gridsize::Int = 120, n_top::Int = 10)
 
 # Arguments
 - `observations::Vector{Int}`: Sequence of observed actions (indices)
@@ -10,22 +13,47 @@
 - `n_particles::Int`: Number of particles for the filter (default: 50)
 - `ess_thresh::Float64`: ESS threshold for resampling as fraction of n_particles (default: 0.5)
 - `resample_alg::Symbol`: Resampling algorithm (:residual, :multinomial, :stratified, default: :residual)
+- `animate_filter_behavior::Bool`: If true, record frames at each timestep for GIF generation (default: false)
+- `true_objective_fn::Function`: Ground truth objective function (required if animate_filter_behavior=true)
+- `mdp::KAgentPOMDP`: MDP instance (required if animate_filter_behavior=true)
+- `agent_params::Dict`: Agent configuration dictionary (required if animate_filter_behavior=true)
+- `gridsize::Int`: Resolution of heatmap grid for animation (default: 120)
+- `n_top::Int`: Number of top particles to visualize in animation (default: 10)
 
 # Returns
-- `state`: Particle filter state from Gen with traces and log_weights
+- If `animate_filter_behavior=false`: `state` - Particle filter state from Gen with traces and log_weights
+- If `animate_filter_behavior=true`: `(state, anim)` - Tuple of particle filter state and animation object
 """
 function particle_filter(observations::Vector{Int}, config::InferenceConfig, π_dist::ScoreΠDist,
                         state_data::Matrix{Float64}, n_particles::Int = 50;
-                        ess_thresh::Float64 = 0.5, resample_alg::Symbol = :residual)
+                        ess_thresh::Float64 = 0.5, resample_alg::Symbol = :residual,
+                        animate_filter_behavior::Bool = false, true_objective_fn::Function = nothing,
+                        mdp::KAgentPOMDP = nothing, agent_params::Dict = Dict(),
+                        gridsize::Int = 120, n_top::Int = 10)
     
     N = length(observations)
     obs_choices = [choicemap((n => :aidx, observations[n])) for n in 1:N]
+    
+    # Initialize animation storage if needed
+    frames = nothing
+    if animate_filter_behavior
+        frames = Vector{Any}()
+    end
     
     # ========== Phase 1: Initialize with first observation ==========
     # Note: inference_model_continuous takes cumulative observations[1:t]
     state = pf_initialize(inference_model, 
                          (config, observations[1:1], state_data[:, 1:1], π_dist), 
                          obs_choices[1], n_particles)
+    
+    # Record first frame if animating
+    if animate_filter_behavior
+        component_fields = [t[1] for t in config.component_tuples]
+        p = Viz.plot_particle_filter_frame(state_data, 1, state, config, component_fields,
+                                           true_objective_fn, mdp, agent_params, π_dist;
+                                           gridsize=gridsize, n_top=n_top)
+        push!(frames, p)
+    end
     
     # ========== Phase 2: Sequential updates ==========
     for n in 2:N
@@ -58,9 +86,26 @@ function particle_filter(observations::Vector{Int}, config::InferenceConfig, π_
                    (config, observations[1:n], state_data[:, 1:n], π_dist),
                    (NoChange(), UnknownChange(), UnknownChange(), NoChange()),
                    obs_choices[n])
+        
+        # Record frame if animating
+        if animate_filter_behavior
+            component_fields = [t[1] for t in config.component_tuples]
+            p = Viz.plot_particle_filter_frame(state_data, n, state, config, component_fields,
+                                               true_objective_fn, mdp, agent_params, π_dist;
+                                               gridsize=gridsize, n_top=n_top)
+            push!(frames, p)
+        end
     end
     
-    return state
+    # Generate animation if requested
+    if animate_filter_behavior
+        anim = Plots.@animate for p in frames
+            plot(p)
+        end
+        return (state, anim)
+    else
+        return state
+    end
 end
 
 # ============================================================================

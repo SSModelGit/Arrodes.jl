@@ -25,8 +25,11 @@ export plot_top_objective_with_trajectories,
     plot_objective_triptych,
     make_final_inference_figures,
     plot_all_objectives_from_cache,
-    compare_iql_vs_true_policy,
-    plot_particle_filter_explanation
+    compare_iql_vs_true_policy
+
+include("filter_explanations.jl")
+export plot_particle_filter_explanation,
+    plot_particle_filter_frame
 
 include("ablation_plots.jl")
 export load_ablation_wholesale_from_metadata,

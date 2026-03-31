@@ -9,12 +9,15 @@ import GeoInterface as GI
 
 rng = Random.MersenneTwister(42)
 
-# Setup observable agent
+######################
+# OBSERVED AGENT SETUP
+######################
+
 spec = MuEnvSpec()
 menv = build_shared_menv(spec)
 
 agent_params = Dict(
-    :start => [1.0 1.0],
+    :start => [3.0 4.0],
     :dimensions => (0.0, 10.0),
     :menv => menv,
     :obcs => [
@@ -23,11 +26,6 @@ agent_params = Dict(
     ]
 )
 
-# true_objective_fn = (x, y) -> (
-#     0.6 * cos(0.5*x + 0.5*y + π/4) +
-#     0.4 * exp(-((x-5.0)^2 + (y-5.0)^2) / (2*0.5^2))
-# )
-
 true_objective_fn = x -> (0.6 * cos(0.5*x[1,1] + 0.5*x[1,2] + π/4))
 mdp_objective = x -> (true_objective_fn(x.x), false)
 
@@ -35,6 +33,10 @@ mdp_objective = x -> (true_objective_fn(x.x), false)
 true_objective_fn_viz = (x, y) -> 0.6 * cos(0.5*x + 0.5*y + π/4)
 
 mdp = build_kagent_pomdp(agent_params, mdp_objective)
+
+################
+# DATA GATHERING
+################
 
 # Generate observations using learned policy
 alist = collect(POMDPs.actions(mdp))
@@ -52,12 +54,20 @@ experience = expert_simulator(mdp, planner, bup;
                               max_steps=n_timesteps, sim_limit=20, obs_dims=obs_dims,
                               nonterminal_system=true)
 
+###########
+# DATA PREP
+###########
+
 # Extract state data and actions
 state_data = experience[:s]  # (obs_dim × n_timesteps)
 
 # Extract action indices from one-hot encoded actions
 A = experience[:a]  # (n_actions × n_timesteps, boolean)
 observations = onehot_cols_to_aidx(Float64.(A))
+
+#########################
+# DEFAULT INFERENCE SETUP
+#########################
 
 # Setup component priors
 fourier_field = RandomFourierField(amplitude_max=10.0, freq_max=π)
@@ -92,6 +102,10 @@ config = InferenceConfig(
     rl_config=rl_config,
     agent_params=agent_params
 )
+
+########################
+# RUN INFERENCE PIPELINE
+########################
 
 # Run inference
 π_dist = ScoreΠDist(
