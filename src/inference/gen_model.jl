@@ -1,132 +1,87 @@
-"""
-    gen_K(cfg::FourierDiscreteCfg)
+@gen function inference_model(config::InferenceConfig,
+                                         observations::Vector{Int},
+                                         state_data::Matrix{Float64},
+                                         π_dist::ScoreΠDist)
+    component_switch = config.component_params_switch
+    component_sampler = config.component_type_sampler
+    # Phase 1: Sample component types and parameters (Gen-traced)
+    component_indices = Vector{Int}(undef, config.k_components)
+    component_params = Vector{Dict}(undef, config.k_components)
+    
+    for k in 1:config.k_components
+        idx, params = @trace(Priors.sample_component_and_params(component_switch,
+                                                                component_sampler), 
+                             k => :component)
+        component_indices[k] = idx
+        component_params[k] = params
+    end
+    
+    # Phase 2: Construct aggregate objective (deterministic)
+    component_fields_vec = [config.component_tuples[idx][1] for idx in component_indices]
+    component_fns = [Priors.make_component(component_fields_vec[k], component_params[k]) 
+                     for k in 1:config.k_components]
+    
+    aggregate_objective(x::Real, y::Real) = sum([fn(x, y) for fn in component_fns])
+    objective_fn = Priors.make_pomdp_objective_from_field(aggregate_objective)
+    
+    # Generate cache key from component configuration
+    config_key = hash((component_indices, [Dict(collect(p)) for p in component_params]))
 
-Generative function to sample number of Fourier features.
-"""
-@gen function gen_K(cfg::FourierDiscreteCfg)
-    K ~ categorical(Priors.K_probs(cfg))   # returns 1..Kmax
-    return K
+    # Phase 3: Build MDP and train policy with caching via π_dist
+    mdp = RL.ensure_mdp!(π_dist, config_key, objective_fn, config)
+    
+    # Use π_dist's caching infrastructure via multi-dispatch
+    RL.get_π_proposal(π_dist, config_key, mdp, config)
+
+    # Phase 4: Sample actions from learned policy (Gen-traced)
+    temperature = config.rl_config.temperature
+    
+    for n in 1:length(observations)
+        s = blindstart_KAgentState(mdp, reshape(state_data[:, n][1:2], (1,2)))
+        boltzmann = vec(RL.proposal_boltzmann(π_dist, config_key, config, objective_fn, s; temperature=temperature))
+        boltzmann = boltzmann ./ max(sum(boltzmann), 1e-10)
+        action_idx = @trace(categorical(boltzmann), n => :aidx)
+    end
+    
+    return component_indices
 end
 
 """
-    gen_mode_indices(cfg::FourierDiscreteCfg)
+    extract_component_info(trace::Dict, config::InferenceConfig) -> Dict
 
-Generative function to sample f, A, and ϕ for a Fourier feature.
+Extract component indices and parameters from trace.
+
+Returns Dict with :component_indices and :component_params keys.
 """
-@gen function gen_mode_indices(cfg::FourierDiscreteCfg)
-    f_supp, f_w = Priors.freq_bin_support_and_probs(cfg)
-    a_supp, a_w = Priors.amp_bin_support_and_probs(cfg)
-    p_supp, p_w = Priors.phase_bin_support_and_probs(cfg)
-    fx_idx ~ categorical(f_w)
-    fy_idx ~ categorical(f_w)
-    A_idx  ~ categorical(a_w)
-    ϕ_idx  ~ categorical(p_w)
-
-    return (fx_i = f_supp[fx_idx],
-            fy_i = f_supp[fy_idx],
-            A_i  = a_supp[A_idx],
-            ϕ_i  = p_supp[ϕ_idx])
+function extract_component_info(trace, config::InferenceConfig)
+    component_indices = Int[]
+    component_params = Dict[]
+    
+    for k in 1:config.k_components
+        idx, params = trace[k => :component]
+        push!(component_indices, idx)
+        push!(component_params, params)
+    end
+    
+    return Dict(
+        :component_indices => component_indices,
+        :component_params => component_params
+    )
 end
 
-
-@gen function gen_mode_indices(K::Int, cfg::FourierDiscreteCfg)
-    f_supp, f_w = Priors.freq_bin_support_and_probs(cfg)
-    a_supp, a_w = Priors.amp_bin_support_and_probs(cfg)
-    p_supp, p_w = Priors.phase_bin_support_and_probs(cfg)
-
-    fx_i = Vector{Int}(undef, K)
-    fy_i = Vector{Int}(undef, K)
-    A_i  = Vector{Int}(undef, K)
-    ϕ_i  = Vector{Int}(undef, K)
-
-    for m in 1:K
-        fx_idx = @trace(categorical(f_w), (:mode, m) => :fx_idx)
-        fy_idx = @trace(categorical(f_w), (:mode, m) => :fy_idx)
-        A_idx  = @trace(categorical(a_w), (:mode, m) => :A_idx)
-        ϕ_idx  = @trace(categorical(p_w), (:mode, m) => :ϕ_idx)
-
-        fx_i[m] = f_supp[fx_idx]
-        fy_i[m] = f_supp[fy_idx]
-        A_i[m]  = a_supp[A_idx]
-        ϕ_i[m]  = p_supp[ϕ_idx]
-    end
-
-    # return a vector of per-mode discrete indices
-    out = Vector{Any}(undef, K)
-    for m in 1:K
-        out[m] = (fx_i[m], fy_i[m], A_i[m], ϕ_i[m])
-    end
-    return out
-end
-
-
 """
-    gen_fourier_bank(cfg::FourierDiscreteCfg)
+    reconstruct_objective_from_trace(trace::Dict, config::InferenceConfig) -> Function
 
-Composes the Fourier feature sampling process:
-* First, samples number of features to be used
-* Second, samples the parameters for each feature (f, A, ϕ).
-
-Returns a cached set of keys mapping to each feature and associated params.
+Reconstruct aggregate objective (x, y) -> Float64 from trace.
 """
-@gen function gen_fourier_bank_fixed(cfg::FourierDiscreteCfg)
-    # K in 1..Kmax
-    K = @trace(gen_K(cfg), :K)
-
-    # supports & probs (precompute once)
-    f_supp, f_w = Priors.freq_bin_support_and_probs(cfg)
-    a_supp, a_w = Priors.amp_bin_support_and_probs(cfg)
-    p_supp, p_w = Priors.phase_bin_support_and_probs(cfg)
-
-    # fixed bank of discrete indices (length Kmax)
-    fx_i = Vector{Int}(undef, cfg.Kmax)
-    fy_i = Vector{Int}(undef, cfg.Kmax)
-    A_i  = Vector{Int}(undef, cfg.Kmax)
-    ϕ_i  = Vector{Int}(undef, cfg.Kmax)
-
-    for m in 1:cfg.Kmax
-        fx_idx = @trace(categorical(f_w), (:mode, m) => :fx_idx)
-        fy_idx = @trace(categorical(f_w), (:mode, m) => :fy_idx)
-        A_idx  = @trace(categorical(a_w), (:mode, m) => :A_idx)
-        ϕ_idx  = @trace(categorical(p_w), (:mode, m) => :ϕ_idx)
-
-        fx_i[m] = f_supp[fx_idx]
-        fy_i[m] = f_supp[fy_idx]
-        A_i[m]  = a_supp[A_idx]
-        ϕ_i[m]  = p_supp[ϕ_idx]
-    end
-
-    # continuous params for the full bank
-    fx = Priors.f_from_i.(fx_i, Ref(cfg))
-    fy = Priors.f_from_i.(fy_i, Ref(cfg))
-    A  = Priors.A_from_i.(A_i,  Ref(cfg))
-    ϕ  = Priors.ϕ_from_i.(ϕ_i,  Ref(cfg))
-
-    # stable cache key uses only the active prefix (1:K)
-    key = (K, fx_i[1:K], fy_i[1:K], A_i[1:K], ϕ_i[1:K])
-
-    return (key=key, K=K, fx=fx, fy=fy, A=A, ϕ=ϕ, fx_i=fx_i, fy_i=fy_i, A_i=A_i, ϕ_i=ϕ_i)
-end
-
-@gen function inference_model(N::Int, π_dist::ScoreΠDist, agent_params::Dict, state_data::Matrix)
-    # sample discretized Fourier bank (cfg-only overload) — do not rely on K-argument overload
-    fourier = @trace(gen_fourier_bank_fixed(π_dist.fourier_cfg), :fourier)
-    key = fourier.key
-
-    # register for downstream reporting / priors
-    RL.register_key_if_new!(π_dist, key)
-
-    # lazy build mdp/policy (side-effecting cache)
-    mdp = RL.ensure_mdp!(π_dist, key, fourier, agent_params)
-    _   = RL.get_π_proposal(π_dist, key) # only use this to do lazy-loading as needed
-
-    temp = get(agent_params, :policy_temperature, 1.0)
-    for n in 1:N
-        s = blindstart_KAgentState(mdp, reshape(state_data[:,n][1:2], (1,2)))
-        boltzmann = max.(vec(RL.proposal_boltzmann(π_dist, key, s; temperature=temp)), 0.0)
-        boltzmann ./= sum(boltzmann)
-        _ = {n => :aidx} ~ categorical(boltzmann)
-    end
-
-    return key
+function reconstruct_objective_from_trace(trace, config::InferenceConfig)
+    info = extract_component_info(trace, config)
+    component_indices = info[:component_indices]
+    component_params = info[:component_params]
+    component_fields = [config.component_tuples[idx][1] for idx in component_indices]
+    
+    component_fns = [Priors.make_component(component_fields[k], component_params[k]) 
+                     for k in 1:config.k_components]
+    
+    return (x, y) -> sum([fn(x, y) for fn in component_fns])
 end

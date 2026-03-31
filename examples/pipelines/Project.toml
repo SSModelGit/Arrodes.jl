@@ -1,0 +1,13 @@
+[deps]
+ArgCheck = "dce04be8-c92d-5529-be00-80e4d2c0e197"
+Arrodes = "95b063a4-db16-4801-a32b-edd561b67298"
+BSON = "fbb218c0-5317-5bc6-957e-2ee96dd4b1f0"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
+GeoInterface = "cf35fbd7-0cd7-5166-be24-54bfbe79505f"
+MuKumari = "28f59e21-8c37-415f-8237-13dbde849877"
+OpenSSL_jll = "458c3c95-2e84-50aa-8efc-19380b2a3a95"
+POMDPs = "a93abf59-7444-517b-a68a-c42f96afdd7d"
+Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+cuDNN = "02a925ec-e4fe-4b08-9a7e-0d78e3d38ccd"

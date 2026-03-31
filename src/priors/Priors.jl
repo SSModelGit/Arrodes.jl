@@ -18,8 +18,7 @@ export ComponentField,
     describe_component_params
 
 include("fields.jl")
-export K_probs,
-    make_pomdp_objective_from_field,
+export make_pomdp_objective_from_field,
     objective_grid_from_field,
     objective_grid_from_mdp
 

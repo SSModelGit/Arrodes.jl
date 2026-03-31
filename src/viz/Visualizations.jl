@@ -7,6 +7,7 @@ using TOML, BSON
 using Plots
 using StatsPlots
 using Measures
+using Colors
 using MuKumari
 using Crux
 using Flux
@@ -15,7 +16,7 @@ using ..Utils
 using ..Priors
 using ..RL
 using ..Analysis
-import ..Arrodes: ScoreΠDist
+import ..Arrodes: ScoreΠDist, InferenceConfig
 
 include("objectives.jl")
 export plot_top_objective_with_trajectories,
@@ -24,7 +25,8 @@ export plot_top_objective_with_trajectories,
     plot_objective_triptych,
     make_final_inference_figures,
     plot_all_objectives_from_cache,
-    compare_iql_vs_true_policy
+    compare_iql_vs_true_policy,
+    plot_particle_filter_explanation
 
 include("ablation_plots.jl")
 export load_ablation_wholesale_from_metadata,

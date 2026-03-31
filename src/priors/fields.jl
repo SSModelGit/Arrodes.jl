@@ -1,15 +1,4 @@
 """
-    K_probs(cfg::FourierDiscreteCfg)
-
-Constructs categorical vector mapping k-count to exponential decay distribution.
-"""
-function K_probs(cfg::PriorDiscreteCfg)
-    ws = exp.(-cfg.λK .* (0:(cfg.Kmax-1)))
-    ws ./= sum(ws)
-    return ws
-end
-
-"""
     make_pomdp_objective_from_field(field; done_mode=:never, done_threshold=Inf)
 
 Converts a scalar field into MuKumari's objective signature:
