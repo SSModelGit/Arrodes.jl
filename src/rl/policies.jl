@@ -36,6 +36,24 @@ function proposal_boltzmann(π_dist::ScoreΠDist, prop_name, loc; temperature::F
     return Float64.(boltzmann)
 end
 
+function proposal_boltzmann(π_dist::ScoreΠDist, mdp_key, config::InferenceConfig, obj::Function,
+                            loc; temperature::Float64=1.0)
+    mdp = ensure_mdp!(π_dist, mdp_key, obj, config)
+    π_prop = get_π_proposal(π_dist, mdp_key, mdp, config)
+    all_a_onehot = π_a_1hotall(π_dist)
+
+    # assume state location already in obs vec form, otherwise need to use MuKumari.shape_state_as_obs(loc)
+    q = Crux.value(π_prop, MuKumari.shape_state_as_obs(mdp, loc), all_a_onehot)
+    # Stability + temperature
+    T = max(temperature, 1e-6)
+    logits = (q .- maximum(q, dims=2)) ./ T
+
+    boltzmann = softmax(logits, dims=2)
+
+    # cast boltzmann distribution into Float64 form, from as the GPU operates in Float32
+    return Float64.(boltzmann)
+end
+
 """
     greedy_action_symbol_from_boltzmann(π_dist, key, s) -> (a_sym, a_idx)
 

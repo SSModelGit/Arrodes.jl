@@ -38,7 +38,7 @@ function setup_observable_agent(; rng=Random.default_rng())
     )
 
     # Wrap objective in POMDP format: (reward::Float64, done::Bool)
-    mdp_objective = x -> (true_objective_fn(x[1,1], x[1,2]), false)
+    mdp_objective = x -> (true_objective_fn(x.x[1,1], x.x[1,2]), false)
 
     mdp = Utils.build_kagent_pomdp(agent_params, mdp_objective)
 
@@ -87,7 +87,7 @@ Construct InferenceConfig with component switch and sampler from provided compon
 
 Returns: InferenceConfig
 """
-function setup_inference_config(component_tuples::Vector{Tuple}, agent_params::Dict)
+function setup_inference_config(component_tuples::Vector, agent_params::Dict)
     # Build component parameter switch and sampler
     param_switch, component_fields = Priors.build_component_param_switch(component_tuples)
     component_type_sampler = Priors.component_type_sampler(component_fields)
@@ -135,6 +135,7 @@ function run_inference_pipeline(observations, state_data, config, alist;
     pf_state = Inference.particle_filter(
         observations,
         config,
+        π_dist,
         state_data,
         n_particles
     )
@@ -186,15 +187,15 @@ end
         )
 
         component_tuples = [
-            (fourier_field, Priors.sample_fourier_params),
-            (rbf_field, Priors.sample_rbf_params)
+            (fourier_field, Priors.fourier_params_sampler(fourier_field)),
+            (rbf_field, Priors.rbf_params_sampler(rbf_field))
         ]
 
         @test length(component_tuples) == 2
         @test isa(component_tuples[1][1], RandomFourierField)
         @test isa(component_tuples[2][1], RadialBasisField)
-        @test isa(component_tuples[1][2], Function)
-        @test isa(component_tuples[2][2], Function)
+        @test component_tuples[1][2] !== nothing
+        @test component_tuples[2][2] !== nothing
     end
 
     @testset "Setup: InferenceConfig Creation" begin
@@ -209,8 +210,8 @@ end
         )
 
         component_tuples = [
-            (fourier_field, Priors.sample_fourier_params),
-            (rbf_field, Priors.sample_rbf_params)
+            (fourier_field, Priors.fourier_params_sampler(fourier_field)),
+            (rbf_field, Priors.rbf_params_sampler(rbf_field))
         ]
 
         config = setup_inference_config(component_tuples, agent_params)
@@ -219,7 +220,7 @@ end
         @test config.k_components == 1
         @test length(config.component_tuples) == 2
         @test isa(config.component_params_switch, Gen.Switch)
-        @test isa(config.component_type_sampler, Function)
+        @test config.component_type_sampler !== nothing
         @test isa(config.rl_config, RLConfig)
     end
 
@@ -235,8 +236,8 @@ end
         )
 
         component_tuples = [
-            (fourier_field, Priors.sample_fourier_params),
-            (rbf_field, Priors.sample_rbf_params)
+            (fourier_field, Priors.fourier_params_sampler(fourier_field)),
+            (rbf_field, Priors.rbf_params_sampler(rbf_field))
         ]
 
         config = setup_inference_config(component_tuples, agent_params)
@@ -256,8 +257,7 @@ end
         # Trace the generative model
         trace = Gen.simulate(
             Inference.inference_model_continuous,
-            (config, observations, state_data, π_dist),
-            rng=Random.MersenneTwister(42)
+            (config, observations, state_data, π_dist)
         )
 
         @test isa(trace, Gen.Trace)
@@ -281,8 +281,8 @@ end
         )
 
         component_tuples = [
-            (fourier_field, Priors.sample_fourier_params),
-            (rbf_field, Priors.sample_rbf_params)
+            (fourier_field, Priors.fourier_params_sampler(fourier_field)),
+            (rbf_field, Priors.rbf_params_sampler(rbf_field))
         ]
 
         config = setup_inference_config(component_tuples, agent_params)
@@ -321,8 +321,8 @@ end
         )
 
         component_tuples = [
-            (fourier_field, Priors.sample_fourier_params),
-            (rbf_field, Priors.sample_rbf_params)
+            (fourier_field, Priors.fourier_params_sampler(fourier_field)),
+            (rbf_field, Priors.rbf_params_sampler(rbf_field))
         ]
 
         config = setup_inference_config(component_tuples, agent_params)
@@ -373,8 +373,8 @@ end
         )
 
         component_tuples = [
-            (fourier_field, Priors.sample_fourier_params),
-            (rbf_field, Priors.sample_rbf_params)
+            (fourier_field, Priors.fourier_params_sampler(fourier_field)),
+            (rbf_field, Priors.rbf_params_sampler(rbf_field))
         ]
 
         config = setup_inference_config(component_tuples, agent_params)
@@ -394,8 +394,7 @@ end
         # Simulate generative model
         trace = Gen.simulate(
             Inference.inference_model_continuous,
-            (config, observations, state_data, π_dist),
-            rng=Random.MersenneTwister(42)
+            (config, observations, state_data, π_dist)
         )
 
         # Extract component info from trace
@@ -423,8 +422,8 @@ end
         )
 
         component_tuples = [
-            (fourier_field, Priors.sample_fourier_params),
-            (rbf_field, Priors.sample_rbf_params)
+            (fourier_field, Priors.fourier_params_sampler(fourier_field)),
+            (rbf_field, Priors.rbf_params_sampler(rbf_field))
         ]
 
         config = setup_inference_config(component_tuples, agent_params)
@@ -444,8 +443,7 @@ end
         # Simulate generative model
         trace = Gen.simulate(
             Inference.inference_model_continuous,
-            (config, observations, state_data, π_dist),
-            rng=Random.MersenneTwister(42)
+            (config, observations, state_data, π_dist)
         )
 
         # Reconstruct objective

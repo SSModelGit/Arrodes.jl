@@ -14,25 +14,24 @@ function component_type(::RadialBasisField)
 end
 
 """
-    sample_rbf_params(field::RadialBasisField)
+    rbf_params_sampler(field::RadialBasisField)
 
-Sample RBF parameters using specific bounds from field instance via Gen.jl.
-
-Uses Gen's lowercase distribution functions for continuous parameter sampling,
-replacing the old discrete bin-based approach while maintaining the ability to
-sample center coordinates and amplitude.
+Return a Gen-wrapped closure that samples RBF parameters from the given field.
 """
-Gen.@gen function sample_rbf_params(field::RadialBasisField)
-    center_x ~ Gen.uniform(field.x_min, field.x_max)
-    center_y ~ Gen.uniform(field.y_min, field.y_max)
-    amplitude ~ Gen.uniform(field.amp_min, field.amp_max)
-    
-    return Dict(
-        "center_x" => center_x,
-        "center_y" => center_y,
-        "amplitude" => amplitude,
-        "sigma" => field.σ
-    )
+function rbf_params_sampler(field::RadialBasisField)
+    Gen.@gen function sample_params()
+        center_x ~ Gen.uniform(field.x_min, field.x_max)
+        center_y ~ Gen.uniform(field.y_min, field.y_max)
+        amplitude ~ Gen.uniform(field.amp_min, field.amp_max)
+        
+        return Dict(
+            "center_x" => center_x,
+            "center_y" => center_y,
+            "amplitude" => amplitude,
+            "sigma" => field.σ
+        )
+    end
+    return sample_params
 end
 
 """
@@ -52,7 +51,7 @@ continuous parameters sampled via Gen.jl instead of discretized bins.
 # Returns
 - `Function`: Scalar field f(x::Real, y::Real)::Float64
 """
-function make_component(::RadialBasisField, params::Dict{String, Any})
+function make_component(::RadialBasisField, params::Dict)
     cx = params["center_x"]
     cy = params["center_y"]
     A = params["amplitude"]

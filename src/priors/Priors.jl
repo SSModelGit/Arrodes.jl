@@ -24,22 +24,22 @@ export K_probs,
     objective_grid_from_mdp
 
 include("fourier.jl")
-export RandomFourierField, sample_fourier_params
+export RandomFourierField, fourier_params_sampler
 
 include("rbf.jl")
-export RadialBasisField, sample_rbf_params
+export RadialBasisField, rbf_params_sampler
 
 """
-    build_component_param_switch(component_tuples::Vector{Tuple})
+    build_component_param_switch(component_tuples::Vector)
 
 Args:
-    - component_tuples: Vector of tuples (ComponentField, sampling_function) for each component
+    - component_tuples: Vector of tuples (ComponentField, sampling_closure) for each component
 Returns:
     - (param_switch, component_fields):
-        - param_switch: Gen.Switch object that maps component indices to parameter sampling functions
+        - param_switch: Gen.Switch object that maps component indices to parameter sampling closures
         - component_fields: Vector of ComponentField instances corresponding to the order of the switch
 """
-function build_component_param_switch(component_tuples::Vector{Tuple})
+function build_component_param_switch(component_tuples::Vector)
     # Extract component fields and sampling functions
     component_fields = [t[1] for t in component_tuples]
     param_sampling_fns = [t[2] for t in component_tuples]
@@ -86,7 +86,7 @@ Returns:
 Where component_idx can be used to look up the component field from the original vector.
 """
 Gen.@gen function sample_component_and_params(component_switch::Gen.Switch,
-                                              component_type_sampler::Function)
+                                              component_type_sampler::Any)
     # Phase 1: Select which component type
     component_idx ~ component_type_sampler()
 

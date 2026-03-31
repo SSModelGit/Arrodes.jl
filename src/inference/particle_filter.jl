@@ -77,15 +77,12 @@ with observations[1:t] rather than just the single timestep.
 # Returns
 - `state`: Particle filter state from Gen with traces and log_weights
 """
-function particle_filter(observations::Vector{Int}, config::InferenceConfig, 
+function particle_filter(observations::Vector{Int}, config::InferenceConfig, π_dist::ScoreΠDist,
                         state_data::Matrix{Float64}, n_particles::Int = 50;
                         ess_thresh::Float64 = 0.5, resample_alg::Symbol = :residual)
     
     N = length(observations)
     obs_choices = [choicemap((n => :aidx, observations[n])) for n in 1:N]
-    
-    # Create a ScoreΠDist to cache trained solvers and policies across particles
-    π_dist = ScoreΠDist()
     
     # ========== Phase 1: Initialize with first observation ==========
     # Note: inference_model_continuous takes cumulative observations[1:t]
@@ -144,7 +141,7 @@ Extract component selections and parameters from a particle's trace.
   - `component_idxs::Vector{Int}`: Selected component type index for each component
   - `component_params::Vector{Dict}`: Parameter dictionaries for each component
 """
-function extract_particle_component_info(trace::Dict, config::InferenceConfig,
+function extract_particle_component_info(trace, config::InferenceConfig,
                                         component_fields::Vector)
     component_idxs = Vector{Int}(undef, config.k_components)
     component_params = Vector{Dict}(undef, config.k_components)
@@ -188,7 +185,7 @@ function best_particle(pf_state, config::InferenceConfig, component_fields::Vect
     (idxs, params) = extract_particle_component_info(best_trace, config, component_fields)
     
     # Reconstruct objective from best particle's components
-    component_fns = [Priors.make_component(typeof(component_fields[idx]), p)
+    component_fns = [Priors.make_component(component_fields[idx], p)
                     for (idx, p) in zip(idxs, params)]
     
     objective_fn(x, y) = sum(f(x, y) for f in component_fns)

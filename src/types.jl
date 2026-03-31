@@ -210,10 +210,10 @@ Fields:
 @with_kw struct InferenceConfig
     component_tuples::Vector{Tuple}
     component_params_switch::Gen.Switch
-    component_type_sampler::Function
+    component_type_sampler
     k_components::Integer = 1
     rl_config::RLConfig = RLConfig()
-    agent_params::Dict{String, Any} = Dict()
+    agent_params::Dict = Dict()
     iterative_deepening::Bool = false
-    metadata::Dict{String, Any} = Dict()
+    metadata::Dict = Dict()
 end

@@ -10,6 +10,7 @@ using POMDPs: actions
 
 import ..Priors
 import ..RL
+import ..Utils
 import ..Arrodes: FourierDiscreteCfg, ScoreΠDist, RLConfig, InferenceConfig
 
 include("gen_model.jl")

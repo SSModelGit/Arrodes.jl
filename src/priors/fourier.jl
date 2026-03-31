@@ -14,22 +14,23 @@ function component_type(::RandomFourierField)
 end
 
 """
-    sample_fourier_params(field::RandomFourierField)
+    fourier_params_sampler(field::RandomFourierField)
 
-Sample Fourier parameters using specific bounds from field instance.
-
-Allows customization of parameter bounds per component type instance.
+Return a Gen-wrapped closure that samples Fourier parameters from the given field.
 """
-Gen.@gen function sample_fourier_params(field::RandomFourierField)
-    amplitude ~ Gen.uniform(0, field.amplitude_max)
-    frequency ~ Gen.uniform(0, field.freq_max)
-    phase ~ Gen.uniform(0, 2π)
-    
-    return Dict(
-        "amplitude" => amplitude,
-        "frequency" => frequency,
-        "phase" => phase
-    )
+function fourier_params_sampler(field::RandomFourierField)
+    Gen.@gen function sample_params()
+        amplitude ~ Gen.uniform(0, field.amplitude_max)
+        frequency ~ Gen.uniform(0, field.freq_max)
+        phase ~ Gen.uniform(0, 2π)
+        
+        return Dict(
+            "amplitude" => amplitude,
+            "frequency" => frequency,
+            "phase" => phase
+        )
+    end
+    return sample_params
 end
 
 """
@@ -48,7 +49,7 @@ continuous parameters sampled via Gen.jl instead of discretized bins.
 # Returns
 - `Function`: Scalar field f(x::Real, y::Real)::Float64
 """
-function make_component(::RandomFourierField, params::Dict{String, Any})
+function make_component(::RandomFourierField, params::Dict)
     A = params["amplitude"]
     f = params["frequency"]
     φ = params["phase"]

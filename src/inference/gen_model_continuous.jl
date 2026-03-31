@@ -1,4 +1,4 @@
-@gen function inference_model_continuous(config::Arrodes.InferenceConfig,
+@gen function inference_model_continuous(config::InferenceConfig,
                                          observations::Vector{Int},
                                          state_data::Matrix{Float64},
                                          π_dist::ScoreΠDist)
@@ -24,21 +24,21 @@
     aggregate_objective(x::Real, y::Real) = sum([fn(x, y) for fn in component_fns])
     objective_fn = Priors.make_pomdp_objective_from_field(aggregate_objective)
     
-    # Phase 3: Build MDP and train policy with caching via π_dist
-    mdp = Arrodes.build_kagent_pomdp(config.agent_params, objective_fn)
-    
     # Generate cache key from component configuration
     config_key = hash((component_indices, [Dict(collect(p)) for p in component_params]))
+
+    # Phase 3: Build MDP and train policy with caching via π_dist
+    mdp = RL.ensure_mdp!(π_dist, config_key, objective_fn, config)
     
     # Use π_dist's caching infrastructure via multi-dispatch
-    solver, policy = RL.get_π_proposal(π_dist, config_key, mdp, config)
-    
+    RL.get_π_proposal(π_dist, config_key, mdp, config)
+
     # Phase 4: Sample actions from learned policy (Gen-traced)
     temperature = config.rl_config.temperature
     
     for n in 1:length(observations)
         s = blindstart_KAgentState(mdp, reshape(state_data[:, n][1:2], (1,2)))
-        boltzmann = vec(RL.proposal_boltzmann(policy, mdp, s; temperature=temperature))
+        boltzmann = vec(RL.proposal_boltzmann(π_dist, config_key, config, objective_fn, s; temperature=temperature))
         boltzmann = boltzmann ./ max(sum(boltzmann), 1e-10)
         action_idx = @trace(categorical(boltzmann), n => :aidx)
     end
@@ -53,9 +53,15 @@ Extract component indices and parameters from trace.
 
 Returns Dict with :component_indices and :component_params keys.
 """
-function extract_component_info(trace::Dict, config::Arrodes.InferenceConfig)
-    component_indices = [trace[k => :component => 1] for k in 1:config.k_components]
-    component_params = [trace[k => :component => 2] for k in 1:config.k_components]
+function extract_component_info(trace, config::InferenceConfig)
+    component_indices = Int[]
+    component_params = Dict[]
+    
+    for k in 1:config.k_components
+        idx, params = trace[k => :component]
+        push!(component_indices, idx)
+        push!(component_params, params)
+    end
     
     return Dict(
         :component_indices => component_indices,
@@ -68,7 +74,7 @@ end
 
 Reconstruct aggregate objective (x, y) -> Float64 from trace.
 """
-function reconstruct_objective_from_trace(trace::Dict, config::Arrodes.InferenceConfig)
+function reconstruct_objective_from_trace(trace, config::InferenceConfig)
     info = extract_component_info(trace, config)
     component_indices = info[:component_indices]
     component_params = info[:component_params]
