@@ -117,13 +117,36 @@ config = InferenceConfig(
 )
 
 n_particles = 10
-pf_state = particle_filter(
+
+# Setup frame creation function for animation
+frame_fn1 = make_particle_filter_frame_fn(
+    true_objective_fn_viz, mdp, agent_params, π_dist;
+    gridsize=120, n_top=10, trace_from_current=false
+)
+frame_fn2 = make_particle_filter_frame_fn(
+    true_objective_fn_viz, mdp, agent_params, π_dist;
+    gridsize=120, n_top=10, trace_from_current=true
+)
+
+# Run particle filter with frame recording
+pf_state, frameset = particle_filter(
     observations,
     config,
     π_dist,
     state_data,
-    n_particles
+    n_particles;
+    frame_fns=[frame_fn1, frame_fn2]
 )
+
+# Generate animation from frames
+anim = [animate_particle_filter_from_frames(frames; fps=2) for frames in frameset]
+
+# Save animation with proper fps
+gif(anim[1][1], "filter_evolution_start.gif"; fps=anim[1][2])
+println("Animation saved to: filter_evolution_start.gif")
+
+gif(anim[2][1], "filter_evolution_curr.gif"; fps=anim[2][2])
+println("Animation saved to: filter_evolution_curr.gif")
 
 # Extract and display results
 best_idx, best_weight, comp_idxs, comp_params, obj_fn = 
@@ -132,7 +155,7 @@ best_idx, best_weight, comp_idxs, comp_params, obj_fn =
 println("Inferred component: $(["Fourier", "RBF"][comp_idxs[1]])")
 println("Best particle weight: $best_weight")
 
-# Visualize particle filter explanation
+# Visualize final particle filter state
 p = Visualizations.plot_particle_filter_explanation(
     pf_state, config, component_fields, true_objective_fn_viz,
     state_data, agent_params, π_dist, mdp;
@@ -140,3 +163,4 @@ p = Visualizations.plot_particle_filter_explanation(
 )
 
 display(p)
+savefig(p, "final_particle_filter_state.png")

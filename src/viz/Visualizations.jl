@@ -29,7 +29,9 @@ export plot_top_objective_with_trajectories,
 
 include("filter_explanations.jl")
 export plot_particle_filter_explanation,
-    plot_particle_filter_frame
+    plot_particle_filter_frame,
+    make_particle_filter_frame_fn,
+    animate_particle_filter_from_frames
 
 include("ablation_plots.jl")
 export load_ablation_wholesale_from_metadata,

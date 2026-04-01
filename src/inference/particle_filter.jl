@@ -2,9 +2,7 @@
     particle_filter(observations::Vector{Int}, config::InferenceConfig, 
                     state_data::Matrix{Float64}, n_particles::Int = 50;
                     ess_thresh::Float64 = 0.5, resample_alg::Symbol = :residual,
-                    animate_filter_behavior::Bool = false, true_objective_fn::Function = nothing,
-                    mdp::KAgentPOMDP = nothing, agent_params::Dict = Dict(),
-                    gridsize::Int = 120, n_top::Int = 10)
+                    frame_fns = nothing)
 
 # Arguments
 - `observations::Vector{Int}`: Sequence of observed actions (indices)
@@ -13,32 +11,26 @@
 - `n_particles::Int`: Number of particles for the filter (default: 50)
 - `ess_thresh::Float64`: ESS threshold for resampling as fraction of n_particles (default: 0.5)
 - `resample_alg::Symbol`: Resampling algorithm (:residual, :multinomial, :stratified, default: :residual)
-- `animate_filter_behavior::Bool`: If true, record frames at each timestep for GIF generation (default: false)
-- `true_objective_fn::Function`: Ground truth objective function (required if animate_filter_behavior=true)
-- `mdp::KAgentPOMDP`: MDP instance (required if animate_filter_behavior=true)
-- `agent_params::Dict`: Agent configuration dictionary (required if animate_filter_behavior=true)
-- `gridsize::Int`: Resolution of heatmap grid for animation (default: 120)
-- `n_top::Int`: Number of top particles to visualize in animation (default: 10)
+- `frame_fns::Union{Vector{Function}, Nothing}`: Frame generation functions.
+  - If a Vector of Functions: each called at each timestep, producing separate frame vectors
+  - If `nothing`, no frames are generated (default: nothing)
 
 # Returns
-- If `animate_filter_behavior=false`: `state` - Particle filter state from Gen with traces and log_weights
-- If `animate_filter_behavior=true`: `(state, anim)` - Tuple of particle filter state and animation object
+- `state`: Particle filter state from Gen with traces and log_weights
+- `frames`: 
+  - If frame_fns is a Vector: Vector of frame vectors, one per function
+  - If frame_fns is nothing: Empty Vector{Any}
 """
 function particle_filter(observations::Vector{Int}, config::InferenceConfig, π_dist::ScoreΠDist,
                         state_data::Matrix{Float64}, n_particles::Int = 50;
                         ess_thresh::Float64 = 0.5, resample_alg::Symbol = :residual,
-                        animate_filter_behavior::Bool = false, true_objective_fn::Function = nothing,
-                        mdp::KAgentPOMDP = nothing, agent_params::Dict = Dict(),
-                        gridsize::Int = 120, n_top::Int = 10)
+                        frame_fns = nothing)
     
     N = length(observations)
     obs_choices = [choicemap((n => :aidx, observations[n])) for n in 1:N]
     
-    # Initialize animation storage if needed
-    frames = nothing
-    if animate_filter_behavior
-        frames = Vector{Any}()
-    end
+    # Initialize frame storage: always a vector of vectors, one per frame function
+    frames = isnothing(frame_fns) ? Vector{Any}() : [Vector{Any}() for _ in frame_fns]
     
     # ========== Phase 1: Initialize with first observation ==========
     # Note: inference_model_continuous takes cumulative observations[1:t]
@@ -46,13 +38,12 @@ function particle_filter(observations::Vector{Int}, config::InferenceConfig, π_
                          (config, observations[1:1], state_data[:, 1:1], π_dist), 
                          obs_choices[1], n_particles)
     
-    # Record first frame if animating
-    if animate_filter_behavior
-        component_fields = [t[1] for t in config.component_tuples]
-        p = Viz.plot_particle_filter_frame(state_data, 1, state, config, component_fields,
-                                           true_objective_fn, mdp, agent_params, π_dist;
-                                           gridsize=gridsize, n_top=n_top)
-        push!(frames, p)
+    # Record first frame if frame functions provided
+    if !isnothing(frame_fns)
+        for (i, fn) in enumerate(frame_fns)
+            p = fn(state_data, 1, state, config)
+            push!(frames[i], p)
+        end
     end
     
     # ========== Phase 2: Sequential updates ==========
@@ -87,25 +78,16 @@ function particle_filter(observations::Vector{Int}, config::InferenceConfig, π_
                    (NoChange(), UnknownChange(), UnknownChange(), NoChange()),
                    obs_choices[n])
         
-        # Record frame if animating
-        if animate_filter_behavior
-            component_fields = [t[1] for t in config.component_tuples]
-            p = Viz.plot_particle_filter_frame(state_data, n, state, config, component_fields,
-                                               true_objective_fn, mdp, agent_params, π_dist;
-                                               gridsize=gridsize, n_top=n_top)
-            push!(frames, p)
+        # Record frame if frame functions provided
+        if !isnothing(frame_fns)
+            for (i, fn) in enumerate(frame_fns)
+                p = fn(state_data, n, state, config)
+                push!(frames[i], p)
+            end
         end
     end
     
-    # Generate animation if requested
-    if animate_filter_behavior
-        anim = Plots.@animate for p in frames
-            plot(p)
-        end
-        return (state, anim)
-    else
-        return state
-    end
+    return (state, frames)
 end
 
 # ============================================================================
