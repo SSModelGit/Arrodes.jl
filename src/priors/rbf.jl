@@ -23,12 +23,12 @@ function rbf_params_sampler(field::RadialBasisField)
         center_x ~ Gen.uniform(field.x_min, field.x_max)
         center_y ~ Gen.uniform(field.y_min, field.y_max)
         amplitude ~ Gen.uniform(field.amp_min, field.amp_max)
-        
+
         return Dict(
             "center_x" => center_x,
             "center_y" => center_y,
             "amplitude" => amplitude,
-            "sigma" => field.σ
+            "sigma" => field.σ,
         )
     end
     return sample_params
@@ -56,9 +56,9 @@ function make_component(::RadialBasisField, params::Dict)
     cy = params["center_y"]
     A = params["amplitude"]
     σ = params["sigma"]
-    
+
     σ_sq = σ^2
-    
+
     # Field formula: f(x,y) = A * exp(-(dx² + dy²) / (2σ²))
     function rbf_field(x::Real, y::Real)::Float64
         dx = x - cx
@@ -66,7 +66,7 @@ function make_component(::RadialBasisField, params::Dict)
         r_sq = dx^2 + dy^2
         return A * exp(-r_sq / (2 * σ_sq))
     end
-    
+
     return rbf_field
 end
 
@@ -79,7 +79,7 @@ function describe_component_params(::RadialBasisField)
     return """
     Component Field Type: RBF (RadialBasisField)
     Description: Continuous Gaussian RBF field (replacing old discretized approach)
-    
+
     Parameters:
       center_x ∈ [x_min, x_max]
         Distribution: uniform(x_min, x_max) [continuous, sampled via Gen.jl]
@@ -96,10 +96,10 @@ function describe_component_params(::RadialBasisField)
       sigma (σ)
         Value: Fixed from field instance [not sampled]
         Impact: Gaussian bandwidth - controls spread/width
-    
+
     Field Formula: f(x, y) = A * exp(-(dx² + dy²) / (2σ²))
                   where dx = x - center_x, dy = y - center_y
-    
+
     Note: This is the continuous version replacing the old discrete binned approach.
     """
 end

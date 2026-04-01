@@ -88,17 +88,17 @@ function main(;
     cache_metadata_basename = basename(cache_metadata_filename)
 
     out = ablation_main(
-            training_meta_path;
-            script_dir = DATA_DIR,
-            mode = mode,
-            cache_metadata_filename = cache_metadata_basename,
-            rng = rng,
+        training_meta_path;
+        script_dir = DATA_DIR,
+        mode = mode,
+        cache_metadata_filename = cache_metadata_basename,
+        rng = rng,
     )
-    
+
     wholesale_name = joinpath(DATA_DIR, "ablation_wholesale_$(ts).bson")
     BSON.@save wholesale_name out
     println("Wholesale output saved as: ", wholesale_name)
-    
+
     # Write wholesale metadata
     wholesale_meta_path = write_wholesale_metadata(
         wholesale_name;
@@ -106,7 +106,7 @@ function main(;
         mode = mode,
     )
     println("Wholesale metadata saved as: ", wholesale_meta_path)
-    
+
     return out
 end
 
@@ -125,29 +125,37 @@ all generated plots organized by type.
 
 Returns a Dict of produced plots / filenames.
 """
-function make_and_save_wholesale_plots(wholesale_meta_path::AbstractString; save_dir::AbstractString=DATA_DIR)
+function make_and_save_wholesale_plots(
+    wholesale_meta_path::AbstractString;
+    save_dir::AbstractString = DATA_DIR,
+)
     @argcheck endswith(wholesale_meta_path, ".meta.toml") "wholesale_meta_path must end with .meta.toml; got: $wholesale_meta_path"
-    
+
     # Extract folder name from metadata filename (strip .meta.toml)
     meta_basename = basename(wholesale_meta_path)
-    folder_name = meta_basename[1:end-10]  # Remove ".meta.toml"
+    folder_name = meta_basename[1:(end-10)]  # Remove ".meta.toml"
     plot_dir = joinpath(save_dir, folder_name)
     mkpath(plot_dir)
 
     # Load wholesale data from metadata file
     out, metadata = load_ablation_wholesale_from_metadata(wholesale_meta_path)
 
-    results = Dict{Symbol,Any}()
+    results = Dict{Symbol, Any}()
 
     # 1) Final inference figures (two summary plots)
     try
         figs = make_final_inference_figures(out)
-        p1 = figs.p1; p2 = figs.p2
+        p1 = figs.p1;
+        p2 = figs.p2
         f1 = joinpath(plot_dir, "final_inference_p1.png")
         f2 = joinpath(plot_dir, "final_inference_p2.png")
         savefig(p1, f1)
         savefig(p2, f2)
-        results[:final_inference] = (p1=f1, p2=f2, meta=(best_iqsips=figs.best_iqsips, best_both=figs.best_both))
+        results[:final_inference] = (
+            p1 = f1,
+            p2 = f2,
+            meta = (best_iqsips = figs.best_iqsips, best_both = figs.best_both),
+        )
     catch err
         @warn "make_final_inference_figures failed" error=err
     end
@@ -155,7 +163,7 @@ function make_and_save_wholesale_plots(wholesale_meta_path::AbstractString; save
     # 2) All objectives pages (paginated); save into subdir
     try
         obj_dir = joinpath(plot_dir, "objectives_pages")
-        files = plot_all_objectives_from_cache(out.cache; savepath=obj_dir)
+        files = plot_all_objectives_from_cache(out.cache; savepath = obj_dir)
         results[:all_objectives_pages] = files
     catch err
         @warn "plot_all_objectives_from_cache failed" error=err
@@ -165,9 +173,9 @@ function make_and_save_wholesale_plots(wholesale_meta_path::AbstractString; save
     barplots = make_ablation_barplots(wholesale_meta_path)
     ap_dir = joinpath(plot_dir, "ablation_barplots")
     mkpath(ap_dir)
-    saved = Dict{Symbol,Dict{Symbol,String}}()
+    saved = Dict{Symbol, Dict{Symbol, String}}()
     for (sw, dict) in barplots
-        saved[sw] = Dict{Symbol,String}()
+        saved[sw] = Dict{Symbol, String}()
         for (metric, p) in dict
             fname = joinpath(ap_dir, "ablation_$(sw)_$(metric).png")
             savefig(p, fname)
@@ -179,7 +187,7 @@ function make_and_save_wholesale_plots(wholesale_meta_path::AbstractString; save
     # 4) IQL vs True Policy comparisons for select scenarios
     iql_dir = joinpath(plot_dir, "iql_vs_true_policy")
     mkpath(iql_dir)
-    
+
     # Select a few representative evals: one from each sweep type
     # Strategy: pick eval with best accuracy for each sweep
     evals_by_sweep = Dict{Symbol, Vector{Any}}()
@@ -190,36 +198,37 @@ function make_and_save_wholesale_plots(wholesale_meta_path::AbstractString; save
         end
         push!(evals_by_sweep[sw], e)
     end
-    
+
     iql_files = String[]
     for (sw, evals_list) in evals_by_sweep
         # Pick the eval with best accuracy (fewest degeneracies, highest acc)
         best_e = nothing
         best_acc = -Inf
-        
+
         for e in evals_list
-            accB = get(get(e.B, :pol, (acc=NaN,)), :acc, NaN)
+            accB = get(get(e.B, :pol, (acc = NaN,)), :acc, NaN)
             if !isnan(accB) && accB > best_acc
                 best_acc = accB
                 best_e = e
             end
         end
-        
+
         # If we found a good eval, generate the comparison plot
         if best_e !== nothing
             fname = compare_iql_vs_true_policy(
-                out.cache, best_e;
-                gridsize=80,
-                solver_type=:mcts,
-                solver_params=[:dpw, 1000, 10.0],
-                show_quiver=true,
-                savepath=iql_dir
+                out.cache,
+                best_e;
+                gridsize = 80,
+                solver_type = :mcts,
+                solver_params = [:dpw, 1000, 10.0],
+                show_quiver = true,
+                savepath = iql_dir,
             )
             push!(iql_files, fname)
             @info "Generated IQL vs True policy plot for sweep=$sw: $fname"
         end
     end
-    
+
     results[:iql_vs_true_policy] = iql_files
 
     return results

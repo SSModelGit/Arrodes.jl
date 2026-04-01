@@ -15,7 +15,7 @@ This is the "true" system whose objective we're trying to infer.
 
 Returns: (mdp, agent_params, true_objective_fn)
 """
-function setup_observable_agent(; rng=Random.default_rng())
+function setup_observable_agent(; rng = Random.default_rng())
     spec = MuEnvSpec()
     menv = build_shared_menv(spec)
 
@@ -25,20 +25,20 @@ function setup_observable_agent(; rng=Random.default_rng())
         :menv => menv,
         :obcs => [
             GI.Polygon([[(2.0, 2.0), (2.0, 3.0), (3.0, 3.0), (3.0, 2.0), (2.0, 2.0)]]),
-            GI.Polygon([[(5.0, 5.0), (5.0, 6.0), (6.0, 6.0), (6.0, 5.0), (5.0, 5.0)]])
-        ]
+            GI.Polygon([[(5.0, 5.0), (5.0, 6.0), (6.0, 6.0), (6.0, 5.0), (5.0, 5.0)]]),
+        ],
     )
 
     # Define ground-truth objective: mixture of Fourier and RBF
     # Fourier component: 0.6 * cos(0.5*x + 0.5*y + π/4)
     # RBF component: 0.4 * exp(-((x-5)^2 + (y-5)^2) / 0.5^2)
-    true_objective_fn = (x, y) -> (
-        0.6 * cos(0.5*x + 0.5*y + π/4) +
-        0.4 * exp(-((x-5.0)^2 + (y-5.0)^2) / (2*0.5^2))
-    )
+    true_objective_fn =
+        (x, y) -> (
+            0.6 * cos(0.5*x + 0.5*y + π/4) + 0.4 * exp(-((x-5.0)^2 + (y-5.0)^2) / (2*0.5^2))
+        )
 
     # Wrap objective in POMDP format: (reward::Float64, done::Bool)
-    mdp_objective = x -> (true_objective_fn(x.x[1,1], x.x[1,2]), false)
+    mdp_objective = x -> (true_objective_fn(x.x[1, 1], x.x[1, 2]), false)
 
     mdp = Utils.build_kagent_pomdp(agent_params, mdp_objective)
 
@@ -52,7 +52,11 @@ Generate synthetic trajectory data from the observable agent using random action
 
 Returns: (observations::Vector{Int}, state_data::Matrix{Float64}, alist::Vector)
 """
-function generate_observations(mdp::KAgentPOMDP, n_timesteps::Int; rng=Random.default_rng())
+function generate_observations(
+    mdp::KAgentPOMDP,
+    n_timesteps::Int;
+    rng = Random.default_rng(),
+)
     alist = collect(POMDPs.actions(mdp))
 
     # Initialize state trajectory container
@@ -93,21 +97,16 @@ function setup_inference_config(component_tuples::Vector, agent_params::Dict)
     component_type_sampler = Priors.component_type_sampler(component_fields)
 
     # Configure RL training parameters
-    rl_config = RLConfig(
-        n_iterations=200,
-        epochs=2,
-        batch_size=256,
-        temperature=1.5
-    )
+    rl_config = RLConfig(n_iterations = 200, epochs = 2, batch_size = 256, temperature = 1.5)
 
     # Bundle all inference parameters
     config = InferenceConfig(
-        component_tuples=component_tuples,
-        component_params_switch=param_switch,
-        component_type_sampler=component_type_sampler,
-        k_components=1,  # Infer single component
-        rl_config=rl_config,
-        agent_params=agent_params
+        component_tuples = component_tuples,
+        component_params_switch = param_switch,
+        component_type_sampler = component_type_sampler,
+        k_components = 1,  # Infer single component
+        rl_config = rl_config,
+        agent_params = agent_params,
     )
 
     return config
@@ -120,25 +119,26 @@ Execute the full SMC³ particle filter for objective inference.
 
 Returns: pf_state (particle filter state with posterior over component configurations)
 """
-function run_inference_pipeline(observations, state_data, config, alist; 
-                                n_particles=20, rng=Random.default_rng())
+function run_inference_pipeline(
+    observations,
+    state_data,
+    config,
+    alist;
+    n_particles = 20,
+    rng = Random.default_rng(),
+)
     # Initialize network caching infrastructure
     π_dist = ScoreΠDist(
-        mdp_params=[
+        mdp_params = [
             alist,
             a -> Float64.(Flux.onehot(a, alist)),
-            Float64.(Flux.onehotbatch(alist, alist))
-        ]
+            Float64.(Flux.onehotbatch(alist, alist)),
+        ],
     )
 
     # Run particle filter
-    pf_state = Inference.particle_filter(
-        observations,
-        config,
-        π_dist,
-        state_data,
-        n_particles
-    )
+    pf_state =
+        Inference.particle_filter(observations, config, π_dist, state_data, n_particles)
 
     return pf_state
 end
@@ -146,14 +146,15 @@ end
 @testset "Default Inference Pipeline - Fourier & RBF" begin
 
     @testset "Setup: Observable Agent Creation" begin
-        mdp, agent_params, true_obj = setup_observable_agent(rng=Random.MersenneTwister(42))
-        
+        mdp, agent_params, true_obj =
+            setup_observable_agent(rng = Random.MersenneTwister(42))
+
         @test isa(mdp, KAgentPOMDP)
         @test haskey(agent_params, :start)
         @test haskey(agent_params, :dimensions)
         @test haskey(agent_params, :menv)
         @test isa(true_obj, Function)
-        
+
         # Test objective evaluation at a point
         val = true_obj(5.0, 5.0)
         @test isa(val, Float64)
@@ -161,16 +162,16 @@ end
     end
 
     @testset "Setup: Observation Generation" begin
-        mdp, agent_params, _ = setup_observable_agent(rng=Random.MersenneTwister(42))
+        mdp, agent_params, _ = setup_observable_agent(rng = Random.MersenneTwister(42))
         rng = Random.MersenneTwister(123)
         n_timesteps = 10
-        
-        observations, state_data, alist = generate_observations(mdp, n_timesteps; rng=rng)
-        
+
+        observations, state_data, alist = generate_observations(mdp, n_timesteps; rng = rng)
+
         @test isa(observations, Vector{Int})
         @test length(observations) == n_timesteps
         @test all(1 .<= observations .<= length(alist))
-        
+
         @test isa(state_data, Matrix{Float64})
         @test size(state_data, 2) == n_timesteps
         @test all(isfinite.(state_data))
@@ -178,17 +179,20 @@ end
 
     @testset "Setup: Component Field Definitions" begin
         # Create equally-weighted Fourier and RBF prior set
-        fourier_field = RandomFourierField(amplitude_max=10.0, freq_max=π)
+        fourier_field = RandomFourierField(amplitude_max = 10.0, freq_max = π)
         rbf_field = RadialBasisField(
-            x_min=0.0, x_max=10.0, 
-            y_min=0.0, y_max=10.0,
-            amp_min=0.1, amp_max=10.0, 
-            σ=0.5
+            x_min = 0.0,
+            x_max = 10.0,
+            y_min = 0.0,
+            y_max = 10.0,
+            amp_min = 0.1,
+            amp_max = 10.0,
+            σ = 0.5,
         )
 
         component_tuples = [
             (fourier_field, Priors.fourier_params_sampler(fourier_field)),
-            (rbf_field, Priors.rbf_params_sampler(rbf_field))
+            (rbf_field, Priors.rbf_params_sampler(rbf_field)),
         ]
 
         @test length(component_tuples) == 2
@@ -199,19 +203,22 @@ end
     end
 
     @testset "Setup: InferenceConfig Creation" begin
-        mdp, agent_params, _ = setup_observable_agent(rng=Random.MersenneTwister(42))
-        
-        fourier_field = RandomFourierField(amplitude_max=10.0, freq_max=π)
+        mdp, agent_params, _ = setup_observable_agent(rng = Random.MersenneTwister(42))
+
+        fourier_field = RandomFourierField(amplitude_max = 10.0, freq_max = π)
         rbf_field = RadialBasisField(
-            x_min=0.0, x_max=10.0, 
-            y_min=0.0, y_max=10.0,
-            amp_min=0.1, amp_max=10.0, 
-            σ=0.5
+            x_min = 0.0,
+            x_max = 10.0,
+            y_min = 0.0,
+            y_max = 10.0,
+            amp_min = 0.1,
+            amp_max = 10.0,
+            σ = 0.5,
         )
 
         component_tuples = [
             (fourier_field, Priors.fourier_params_sampler(fourier_field)),
-            (rbf_field, Priors.rbf_params_sampler(rbf_field))
+            (rbf_field, Priors.rbf_params_sampler(rbf_field)),
         ]
 
         config = setup_inference_config(component_tuples, agent_params)
@@ -225,43 +232,47 @@ end
     end
 
     @testset "Generative Model: inference_model_continuous Execution" begin
-        mdp, agent_params, _ = setup_observable_agent(rng=Random.MersenneTwister(42))
-        
-        fourier_field = RandomFourierField(amplitude_max=10.0, freq_max=π)
+        mdp, agent_params, _ = setup_observable_agent(rng = Random.MersenneTwister(42))
+
+        fourier_field = RandomFourierField(amplitude_max = 10.0, freq_max = π)
         rbf_field = RadialBasisField(
-            x_min=0.0, x_max=10.0, 
-            y_min=0.0, y_max=10.0,
-            amp_min=0.1, amp_max=10.0, 
-            σ=0.5
+            x_min = 0.0,
+            x_max = 10.0,
+            y_min = 0.0,
+            y_max = 10.0,
+            amp_min = 0.1,
+            amp_max = 10.0,
+            σ = 0.5,
         )
 
         component_tuples = [
             (fourier_field, Priors.fourier_params_sampler(fourier_field)),
-            (rbf_field, Priors.rbf_params_sampler(rbf_field))
+            (rbf_field, Priors.rbf_params_sampler(rbf_field)),
         ]
 
         config = setup_inference_config(component_tuples, agent_params)
 
         # Generate mock observations
-        observations, state_data, alist = generate_observations(mdp, 5; rng=Random.MersenneTwister(123))
+        observations, state_data, alist =
+            generate_observations(mdp, 5; rng = Random.MersenneTwister(123))
 
         # Create π_dist for caching
         π_dist = ScoreΠDist(
-            mdp_params=[
+            mdp_params = [
                 alist,
                 a -> Float64.(Flux.onehot(a, alist)),
-                Float64.(Flux.onehotbatch(alist, alist))
-            ]
+                Float64.(Flux.onehotbatch(alist, alist)),
+            ],
         )
 
         # Trace the generative model
         trace = Gen.simulate(
             Inference.inference_model_continuous,
-            (config, observations, state_data, π_dist)
+            (config, observations, state_data, π_dist),
         )
 
         @test isa(trace, Gen.Trace)
-        
+
         # Return value should be component indices
         component_indices = Gen.get_retval(trace)
         @test isa(component_indices, Vector{Int})
@@ -270,32 +281,39 @@ end
     end
 
     @testset "Inference Pipeline: Full End-to-End" begin
-        mdp, agent_params, _ = setup_observable_agent(rng=Random.MersenneTwister(42))
-        
-        fourier_field = RandomFourierField(amplitude_max=10.0, freq_max=π)
+        mdp, agent_params, _ = setup_observable_agent(rng = Random.MersenneTwister(42))
+
+        fourier_field = RandomFourierField(amplitude_max = 10.0, freq_max = π)
         rbf_field = RadialBasisField(
-            x_min=0.0, x_max=10.0, 
-            y_min=0.0, y_max=10.0,
-            amp_min=0.1, amp_max=10.0, 
-            σ=0.5
+            x_min = 0.0,
+            x_max = 10.0,
+            y_min = 0.0,
+            y_max = 10.0,
+            amp_min = 0.1,
+            amp_max = 10.0,
+            σ = 0.5,
         )
 
         component_tuples = [
             (fourier_field, Priors.fourier_params_sampler(fourier_field)),
-            (rbf_field, Priors.rbf_params_sampler(rbf_field))
+            (rbf_field, Priors.rbf_params_sampler(rbf_field)),
         ]
 
         config = setup_inference_config(component_tuples, agent_params)
 
         # Generate observations
-        observations, state_data, alist = generate_observations(mdp, 8; rng=Random.MersenneTwister(123))
+        observations, state_data, alist =
+            generate_observations(mdp, 8; rng = Random.MersenneTwister(123))
 
         # Run inference
         n_particles = 6
         pf_state = run_inference_pipeline(
-            observations, state_data, config, alist; 
-            n_particles=n_particles,
-            rng=Random.MersenneTwister(42)
+            observations,
+            state_data,
+            config,
+            alist;
+            n_particles = n_particles,
+            rng = Random.MersenneTwister(42),
         )
 
         # Validate particle filter state
@@ -310,37 +328,44 @@ end
     end
 
     @testset "Posterior Analysis: Best Particle Extraction" begin
-        mdp, agent_params, _ = setup_observable_agent(rng=Random.MersenneTwister(42))
-        
-        fourier_field = RandomFourierField(amplitude_max=10.0, freq_max=π)
+        mdp, agent_params, _ = setup_observable_agent(rng = Random.MersenneTwister(42))
+
+        fourier_field = RandomFourierField(amplitude_max = 10.0, freq_max = π)
         rbf_field = RadialBasisField(
-            x_min=0.0, x_max=10.0, 
-            y_min=0.0, y_max=10.0,
-            amp_min=0.1, amp_max=10.0, 
-            σ=0.5
+            x_min = 0.0,
+            x_max = 10.0,
+            y_min = 0.0,
+            y_max = 10.0,
+            amp_min = 0.1,
+            amp_max = 10.0,
+            σ = 0.5,
         )
 
         component_tuples = [
             (fourier_field, Priors.fourier_params_sampler(fourier_field)),
-            (rbf_field, Priors.rbf_params_sampler(rbf_field))
+            (rbf_field, Priors.rbf_params_sampler(rbf_field)),
         ]
 
         config = setup_inference_config(component_tuples, agent_params)
         component_fields = [t[1] for t in component_tuples]
 
         # Generate observations
-        observations, state_data, alist = generate_observations(mdp, 8; rng=Random.MersenneTwister(123))
+        observations, state_data, alist =
+            generate_observations(mdp, 8; rng = Random.MersenneTwister(123))
 
         # Run inference
         n_particles = 6
         pf_state = run_inference_pipeline(
-            observations, state_data, config, alist; 
-            n_particles=n_particles,
-            rng=Random.MersenneTwister(42)
+            observations,
+            state_data,
+            config,
+            alist;
+            n_particles = n_particles,
+            rng = Random.MersenneTwister(42),
         )
 
         # Extract best particle
-        best_idx, best_weight, comp_idxs, comp_params, obj_fn = 
+        best_idx, best_weight, comp_idxs, comp_params, obj_fn =
             Inference.best_particle(pf_state, config, component_fields)
 
         @test isa(best_idx, Int)
@@ -362,39 +387,43 @@ end
     end
 
     @testset "Trace Analysis: Component Info Extraction" begin
-        mdp, agent_params, _ = setup_observable_agent(rng=Random.MersenneTwister(42))
-        
-        fourier_field = RandomFourierField(amplitude_max=10.0, freq_max=π)
+        mdp, agent_params, _ = setup_observable_agent(rng = Random.MersenneTwister(42))
+
+        fourier_field = RandomFourierField(amplitude_max = 10.0, freq_max = π)
         rbf_field = RadialBasisField(
-            x_min=0.0, x_max=10.0, 
-            y_min=0.0, y_max=10.0,
-            amp_min=0.1, amp_max=10.0, 
-            σ=0.5
+            x_min = 0.0,
+            x_max = 10.0,
+            y_min = 0.0,
+            y_max = 10.0,
+            amp_min = 0.1,
+            amp_max = 10.0,
+            σ = 0.5,
         )
 
         component_tuples = [
             (fourier_field, Priors.fourier_params_sampler(fourier_field)),
-            (rbf_field, Priors.rbf_params_sampler(rbf_field))
+            (rbf_field, Priors.rbf_params_sampler(rbf_field)),
         ]
 
         config = setup_inference_config(component_tuples, agent_params)
 
         # Generate observations
-        observations, state_data, alist = generate_observations(mdp, 8; rng=Random.MersenneTwister(123))
+        observations, state_data, alist =
+            generate_observations(mdp, 8; rng = Random.MersenneTwister(123))
 
         # Create π_dist
         π_dist = ScoreΠDist(
-            mdp_params=[
+            mdp_params = [
                 alist,
                 a -> Float64.(Flux.onehot(a, alist)),
-                Float64.(Flux.onehotbatch(alist, alist))
-            ]
+                Float64.(Flux.onehotbatch(alist, alist)),
+            ],
         )
 
         # Simulate generative model
         trace = Gen.simulate(
             Inference.inference_model_continuous,
-            (config, observations, state_data, π_dist)
+            (config, observations, state_data, π_dist),
         )
 
         # Extract component info from trace
@@ -411,46 +440,50 @@ end
     end
 
     @testset "Objective Reconstruction from Trace" begin
-        mdp, agent_params, _ = setup_observable_agent(rng=Random.MersenneTwister(42))
-        
-        fourier_field = RandomFourierField(amplitude_max=10.0, freq_max=π)
+        mdp, agent_params, _ = setup_observable_agent(rng = Random.MersenneTwister(42))
+
+        fourier_field = RandomFourierField(amplitude_max = 10.0, freq_max = π)
         rbf_field = RadialBasisField(
-            x_min=0.0, x_max=10.0, 
-            y_min=0.0, y_max=10.0,
-            amp_min=0.1, amp_max=10.0, 
-            σ=0.5
+            x_min = 0.0,
+            x_max = 10.0,
+            y_min = 0.0,
+            y_max = 10.0,
+            amp_min = 0.1,
+            amp_max = 10.0,
+            σ = 0.5,
         )
 
         component_tuples = [
             (fourier_field, Priors.fourier_params_sampler(fourier_field)),
-            (rbf_field, Priors.rbf_params_sampler(rbf_field))
+            (rbf_field, Priors.rbf_params_sampler(rbf_field)),
         ]
 
         config = setup_inference_config(component_tuples, agent_params)
 
         # Generate observations
-        observations, state_data, alist = generate_observations(mdp, 8; rng=Random.MersenneTwister(123))
+        observations, state_data, alist =
+            generate_observations(mdp, 8; rng = Random.MersenneTwister(123))
 
         # Create π_dist
         π_dist = ScoreΠDist(
-            mdp_params=[
+            mdp_params = [
                 alist,
                 a -> Float64.(Flux.onehot(a, alist)),
-                Float64.(Flux.onehotbatch(alist, alist))
-            ]
+                Float64.(Flux.onehotbatch(alist, alist)),
+            ],
         )
 
         # Simulate generative model
         trace = Gen.simulate(
             Inference.inference_model_continuous,
-            (config, observations, state_data, π_dist)
+            (config, observations, state_data, π_dist),
         )
 
         # Reconstruct objective
         reconstructed_obj = Inference.reconstruct_objective_from_trace(trace, config)
 
         @test isa(reconstructed_obj, Function)
-        
+
         # Test evaluation at multiple points
         test_points = [(1.0, 1.0), (5.0, 5.0), (9.0, 9.0)]
         for (x, y) in test_points

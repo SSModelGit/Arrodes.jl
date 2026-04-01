@@ -7,20 +7,21 @@ using Gen
 
 using MuKumari
 
-import ..Arrodes: FourierDiscreteCfg, ScoreΠDist, PriorDiscreteCfg, RBFDiscreteCfg,
-    ComponentField, RandomFourierField, RadialBasisField
+import ..Arrodes:
+    FourierDiscreteCfg,
+    ScoreΠDist,
+    PriorDiscreteCfg,
+    RBFDiscreteCfg,
+    ComponentField,
+    RandomFourierField,
+    RadialBasisField
 import ..Utils: randcat
 
 include("generics.jl")
-export ComponentField,
-    component_type,
-    make_component,
-    describe_component_params
+export ComponentField, component_type, make_component, describe_component_params
 
 include("fields.jl")
-export make_pomdp_objective_from_field,
-    objective_grid_from_field,
-    objective_grid_from_mdp
+export make_pomdp_objective_from_field, objective_grid_from_field, objective_grid_from_mdp
 
 include("fourier.jl")
 export RandomFourierField, fourier_params_sampler
@@ -42,7 +43,7 @@ function build_component_param_switch(component_tuples::Vector)
     # Extract component fields and sampling functions
     component_fields = [t[1] for t in component_tuples]
     param_sampling_fns = [t[2] for t in component_tuples]
-    
+
     # Build Switch from the sampling functions
     param_switch = Gen.Switch(param_sampling_fns...)
 
@@ -64,7 +65,7 @@ Returns:
     - Note that sample_component_type doesn't take any arguments!
 """
 function component_type_sampler(component_fields::Vector)
-    Gen.@gen function sample_component_type(c_fields::Vector=component_fields)
+    Gen.@gen function sample_component_type(c_fields::Vector = component_fields)
         component_idx ~ Gen.categorical(normalize(ones(length(c_fields)), 1))
         return component_idx  # Return index, not the field itself
     end
@@ -84,8 +85,10 @@ Returns:
   
 Where component_idx can be used to look up the component field from the original vector.
 """
-Gen.@gen function sample_component_and_params(component_switch::Gen.Switch,
-                                              component_type_sampler::Any)
+Gen.@gen function sample_component_and_params(
+    component_switch::Gen.Switch,
+    component_type_sampler::Any,
+)
     # Phase 1: Select which component type
     component_idx ~ component_type_sampler()
 
@@ -96,8 +99,6 @@ Gen.@gen function sample_component_and_params(component_switch::Gen.Switch,
     return (component_idx, params)
 end
 
-export build_component_param_switch,
-    component_type_sampler,
-    sample_component_and_params
+export build_component_param_switch, component_type_sampler, sample_component_and_params
 
 end

@@ -23,12 +23,8 @@ function fourier_params_sampler(field::RandomFourierField)
         amplitude ~ Gen.uniform(0, field.amplitude_max)
         frequency ~ Gen.uniform(0, field.freq_max)
         phase ~ Gen.uniform(0, 2π)
-        
-        return Dict(
-            "amplitude" => amplitude,
-            "frequency" => frequency,
-            "phase" => phase
-        )
+
+        return Dict("amplitude" => amplitude, "frequency" => frequency, "phase" => phase)
     end
     return sample_params
 end
@@ -53,12 +49,12 @@ function make_component(::RandomFourierField, params::Dict)
     A = params["amplitude"]
     f = params["frequency"]
     φ = params["phase"]
-    
+
     # Field formula: f(x,y) = A * cos(f*x + f*y + ϕ)
     function fourier_field(x::Real, y::Real)::Float64
         return A * cos(f * x + f * y + φ)
     end
-    
+
     return fourier_field
 end
 
@@ -71,7 +67,7 @@ function describe_component_params(::RandomFourierField)
     return """
     Component Field Type: Fourier (RandomFourierField)
     Description: Continuous sinusoidal field (replacing old discretized approach)
-    
+
     Parameters:
       amplitude ∈ [0, 10]
         Distribution: uniform(0, 10) [continuous, sampled via Gen.jl]
@@ -84,9 +80,9 @@ function describe_component_params(::RandomFourierField)
       phase ∈ [0, 2π)
         Distribution: uniform(0, 2π) [continuous, sampled via Gen.jl]
         Impact: Controls phase shift of the cosine
-    
+
     Field Formula: f(x, y) = A * cos(f * x + f * y + φ)
-    
+
     Note: This is the continuous version replacing the old discrete binned approach.
     """
 end

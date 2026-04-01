@@ -7,7 +7,7 @@ Converts a scalar field into MuKumari's objective signature:
 Note that it defaults to just saying `false`, as there is no clear `done` in the open-ended case.
 """
 function make_pomdp_objective_from_field(field::Function)
-    return (s) -> Any[field(s.x[1,1], s.x[1,2]), false]
+    return (s) -> Any[field(s.x[1, 1], s.x[1, 2]), false]
 end
 
 """
@@ -20,7 +20,7 @@ function objective_grid_from_field(field::Function, xs, ys)
     Z = Matrix{Float64}(undef, length(ys), length(xs))
     @inbounds for (j, y) in enumerate(ys)
         for (i, x) in enumerate(xs)
-            Z[j,i] = field(x, y)
+            Z[j, i] = field(x, y)
         end
     end
     return Z
@@ -32,7 +32,7 @@ end
 Constructs a state located at (x,y) using MuKumari's blindstart helper.
 """
 @inline function _state_at_xy(mdp::KAgentPOMDP, x::Real, y::Real)
-    return blindstart_KAgentState(mdp, reshape([Float64(x), Float64(y)], (1,2)))
+    return blindstart_KAgentState(mdp, reshape([Float64(x), Float64(y)], (1, 2)))
 end
 
 """
@@ -46,7 +46,7 @@ function objective_grid_from_mdp(mdp::KAgentPOMDP, xs, ys)
         for (i, x) in enumerate(xs)
             s = _state_at_xy(mdp, x, y)
             r = mdp.obj(s)[1]
-            Z[j,i] = Float64(r)
+            Z[j, i] = Float64(r)
         end
     end
     return Z

@@ -10,21 +10,24 @@ Plot 1:
 
 Returns a Plots.jl plot.
 """
-function plot_true_objective_vs_iqsips_rollout(cache::Dict, e;
-                                               gridsize::Int=180,
-                                               xy_rows::Tuple{Int,Int}=(1,2))
+function plot_true_objective_vs_iqsips_rollout(
+    cache::Dict,
+    e;
+    gridsize::Int = 180,
+    xy_rows::Tuple{Int, Int} = (1, 2),
+)
     rec = cache_record_for_eval(cache, e)
     muenv_spec = cache[:muenv_spec]
 
     mdp, agent_params = reconstruct_mdp_from_cache(rec, muenv_spec)
 
     # Grid + true objective
-    xs, ys = Utils._grid_from_mdp(mdp; gridsize=gridsize)
+    xs, ys = Utils._grid_from_mdp(mdp; gridsize = gridsize)
     Z_true = Priors.objective_grid_from_mdp(mdp, xs, ys)
 
     # Observed trajectory from cached data
     Sobs = rec[:full_data][:s]
-    obs_x, obs_y = Utils.xy_path_from_state_matrix(Sobs; xy_rows=xy_rows)
+    obs_x, obs_y = Utils.xy_path_from_state_matrix(Sobs; xy_rows = xy_rows)
     T = length(obs_x)
 
     # IQ-SIPS inferred rollout (requires top_key)
@@ -34,29 +37,45 @@ function plot_true_objective_vs_iqsips_rollout(cache::Dict, e;
     # Build π_dist for rollout helper
     as = actions(mdp)
     action_list = [as, a->Flux.onehot(a, as), Flux.onehotbatch(as, as)]
-    π_dist = ScoreΠDist(; mdp_params=action_list)
+    π_dist = ScoreΠDist(; mdp_params = action_list)
 
     # -------------------- FIX: ensure MDP exists for this key --------------------
     cfgB = rec[:cfg]  # FourierDiscreteCfg used during ablation
-    ffB  = Priors.decode_fourier_key(keyB, cfgB)
+    ffB = Priors.decode_fourier_key(keyB, cfgB)
     RL.ensure_mdp!(π_dist, keyB, ffB, agent_params)   # populates n_propmdp_list[keyB]
     # ---------------------------------------------------------------------------
 
-    pred_x, pred_y, _ = RL.rollout_greedy_policy(π_dist, keyB; start_state=agent_params[:start_state], T=10)
+    pred_x, pred_y, _ = RL.rollout_greedy_policy(
+        π_dist,
+        keyB;
+        start_state = agent_params[:start_state],
+        T = 10,
+    )
 
-    p = heatmap(xs, ys, Z_true;
-        aspect_ratio=1,
-        dpi=220,
-        title="True Objective vs IQ-SIPS Inferred Behavior (posterior ≈ $(isnan(probB) ? "?" : string(round(probB, digits=3))))",
-        xlabel="x (world units)",
-        ylabel="y (world units)",
-        colorbar_title="Objective value")
+    p = heatmap(
+        xs,
+        ys,
+        Z_true;
+        aspect_ratio = 1,
+        dpi = 220,
+        title = "True Objective vs IQ-SIPS Inferred Behavior (posterior ≈ $(isnan(probB) ? "?" : string(round(probB, digits=3))))",
+        xlabel = "x (world units)",
+        ylabel = "y (world units)",
+        colorbar_title = "Objective value",
+    )
 
-    plot!(p, obs_x, obs_y; label="Observed trajectory", linewidth=3)
-    plot!(p, pred_x, pred_y; label="IQ-SIPS rollout (greedy, top key)", linewidth=3, linestyle=:dash)
+    plot!(p, obs_x, obs_y; label = "Observed trajectory", linewidth = 3)
+    plot!(
+        p,
+        pred_x,
+        pred_y;
+        label = "IQ-SIPS rollout (greedy, top key)",
+        linewidth = 3,
+        linestyle = :dash,
+    )
 
-    scatter!(p, [obs_x[1]], [obs_y[1]]; label="Start", markersize=6)
-    scatter!(p, [obs_x[end]], [obs_y[end]]; label="End", markersize=6)
+    scatter!(p, [obs_x[1]], [obs_y[1]]; label = "Start", markersize = 6)
+    scatter!(p, [obs_x[end]], [obs_y[end]]; label = "End", markersize = 6)
 
     return p
 end
@@ -69,14 +88,13 @@ Plot 2:
 
 Returns a 1x3 Plots.jl layout plot.
 """
-function plot_objective_triptych(cache::Dict, e;
-                                 gridsize::Int=180)
+function plot_objective_triptych(cache::Dict, e; gridsize::Int = 180)
     rec = cache_record_for_eval(cache, e)
     muenv_spec = cache[:muenv_spec]
 
     mdp, _ = reconstruct_mdp_from_cache(rec, muenv_spec)
 
-    xs, ys = Utils._grid_from_mdp(mdp; gridsize=gridsize)
+    xs, ys = Utils._grid_from_mdp(mdp; gridsize = gridsize)
 
     # True objective from reconstructed mdp
     Z_true = Priors.objective_grid_from_mdp(mdp, xs, ys)
@@ -92,25 +110,43 @@ function plot_objective_triptych(cache::Dict, e;
     Z_A = Priors.objective_grid_from_key(keyA, cfg, xs, ys)
     Z_B = Priors.objective_grid_from_key(keyB, cfg, xs, ys)
 
-    p_true = heatmap(xs, ys, Z_true;
-        aspect_ratio=1, dpi=220,
-        title="True Objective",
-        xlabel="x (world units)", ylabel="y (world units)",
-        colorbar_title="Objective")
+    p_true = heatmap(
+        xs,
+        ys,
+        Z_true;
+        aspect_ratio = 1,
+        dpi = 220,
+        title = "True Objective",
+        xlabel = "x (world units)",
+        ylabel = "y (world units)",
+        colorbar_title = "Objective",
+    )
 
-    p_A = heatmap(xs, ys, Z_A;
-        aspect_ratio=1, dpi=220,
-        title="Open-Ended SIPS (posterior ≈ $(isnan(probA) ? "?" : string(round(probA, digits=3))))",
-        xlabel="x (world units)", ylabel="y (world units)",
-        colorbar_title="Objective")
+    p_A = heatmap(
+        xs,
+        ys,
+        Z_A;
+        aspect_ratio = 1,
+        dpi = 220,
+        title = "Open-Ended SIPS (posterior ≈ $(isnan(probA) ? "?" : string(round(probA, digits=3))))",
+        xlabel = "x (world units)",
+        ylabel = "y (world units)",
+        colorbar_title = "Objective",
+    )
 
-    p_B = heatmap(xs, ys, Z_B;
-        aspect_ratio=1, dpi=220,
-        title="IQ-SIPS (posterior ≈ $(isnan(probB) ? "?" : string(round(probB, digits=3))))",
-        xlabel="x (world units)", ylabel="y (world units)",
-        colorbar_title="Objective")
+    p_B = heatmap(
+        xs,
+        ys,
+        Z_B;
+        aspect_ratio = 1,
+        dpi = 220,
+        title = "IQ-SIPS (posterior ≈ $(isnan(probB) ? "?" : string(round(probB, digits=3))))",
+        xlabel = "x (world units)",
+        ylabel = "y (world units)",
+        colorbar_title = "Objective",
+    )
 
-    return plot(p_true, p_A, p_B; layout=(1,3), size=(1500, 480))
+    return plot(p_true, p_A, p_B; layout = (1, 3), size = (1500, 480))
 end
 
 """
@@ -122,21 +158,28 @@ Produces:
 
 Returns a NamedTuple with plots and selected evals.
 """
-function make_final_inference_figures(out;
-                                      gridsize::Int=180,
-                                      xy_rows::Tuple{Int,Int}=(1,2))
+function make_final_inference_figures(
+    out;
+    gridsize::Int = 180,
+    xy_rows::Tuple{Int, Int} = (1, 2),
+)
     cache = out.cache
     evals = out.evals
 
     # (1) best accuracy with IQ-SIPS non-degenerate
-    e1 = best_eval_by_accuracy(evals; requireA=false, requireB=true)
-    p1 = plot_true_objective_vs_iqsips_rollout(cache, e1; gridsize=gridsize, xy_rows=xy_rows)
+    e1 = best_eval_by_accuracy(evals; requireA = false, requireB = true)
+    p1 = plot_true_objective_vs_iqsips_rollout(
+        cache,
+        e1;
+        gridsize = gridsize,
+        xy_rows = xy_rows,
+    )
 
     # (2) best accuracy with both non-degenerate
-    e2 = best_eval_by_accuracy(evals; requireA=true, requireB=true)
-    p2 = plot_objective_triptych(cache, e2; gridsize=gridsize)
+    e2 = best_eval_by_accuracy(evals; requireA = true, requireB = true)
+    p2 = plot_objective_triptych(cache, e2; gridsize = gridsize)
 
-    return (p1=p1, p2=p2, best_iqsips=e1, best_both=e2)
+    return (p1 = p1, p2 = p2, best_iqsips = e1, best_both = e2)
 end
 
 """
@@ -146,7 +189,13 @@ Paginated multi-panel heatmaps of every objective field stored in `cache[:record
 If `savepath` is provided (directory), PNG files are saved as `objectives_page_<p>.png` and a vector of filenames is returned.
 Otherwise a Plots.jl object for the single page (if one) or last page is returned.
 """
-function plot_all_objectives_from_cache(cache::Dict; gridsize::Int=140, max_per_page::Int=9, cmap=:viridis, savepath=nothing)
+function plot_all_objectives_from_cache(
+    cache::Dict;
+    gridsize::Int = 140,
+    max_per_page::Int = 9,
+    cmap = :viridis,
+    savepath = nothing,
+)
     records = cache[:records]
     n = length(records)
     if n == 0
@@ -168,19 +217,31 @@ function plot_all_objectives_from_cache(cache::Dict; gridsize::Int=140, max_per_
         ncol = ceil(Int, sqrt(m))
         nrow = ceil(Int, m / ncol)
 
-        p = plot(layout=(nrow, ncol), size=(ncol*380, nrow*320))
+        p = plot(layout = (nrow, ncol), size = (ncol*380, nrow*320))
 
         for (ii, rec_i) in enumerate(ids)
             rec = records[rec_i]
             # reconstruct mdp for bounds
             mdp, _ = reconstruct_mdp_from_cache(rec, cache[:muenv_spec])
-            xs, ys = Utils._grid_from_mdp(mdp; gridsize=gridsize)
+            xs, ys = Utils._grid_from_mdp(mdp; gridsize = gridsize)
 
             # compute objective grid using stored key+cfg helper
             Z = Priors.objective_grid_from_key(rec[:key], rec[:cfg], xs, ys)
 
             tit = "id=$(rec[:id]) $(rec[:sweep])=$(rec[:level])"
-            heatmap!(p, xs, ys, Z; subplot=ii, aspect_ratio=1, title=tit, xlabel="x", ylabel="y", colorbar_title="obj", c=cmap)
+            heatmap!(
+                p,
+                xs,
+                ys,
+                Z;
+                subplot = ii,
+                aspect_ratio = 1,
+                title = tit,
+                xlabel = "x",
+                ylabel = "y",
+                colorbar_title = "obj",
+                c = cmap,
+            )
         end
 
         if savepath !== nothing
@@ -213,7 +274,15 @@ Produces a 1x3 figure: (true action quiver, IQL action quiver, agreement heatmap
 - `solver_type::Symbol`: Either `:mcts` for planning-based MCTS/DPW planner, or `:softq` for a trained SoftQ policy
 - `solver_params`: For `:mcts`, pass `[:dpw, n_iterations, exploration_constant]`. For `:softq`, pass `[n_samples, epochs, batch_size]` (default `[2000, 2, 256]`)
 """
-function compare_iql_vs_true_policy(cache::Dict, e; gridsize::Int=80, solver_type::Symbol=:mcts, solver_params=[:dpw, 1000, 10.0], show_quiver::Bool=true, savepath=nothing)
+function compare_iql_vs_true_policy(
+    cache::Dict,
+    e;
+    gridsize::Int = 80,
+    solver_type::Symbol = :mcts,
+    solver_params = [:dpw, 1000, 10.0],
+    show_quiver::Bool = true,
+    savepath = nothing,
+)
     rec = cache_record_for_eval(cache, e)
     muenv_spec = cache[:muenv_spec]
 
@@ -221,7 +290,8 @@ function compare_iql_vs_true_policy(cache::Dict, e; gridsize::Int=80, solver_typ
 
     # Recreate anon buffer and train quick IQL
     anon_data = Dict{Symbol, Matrix}(rec[:anon_data])
-    anon_buf  = ExperienceBuffer(anon_data, size(anon_data[:s],2), 1, Array{Int64}[], nothing, 0)
+    anon_buf =
+        ExperienceBuffer(anon_data, size(anon_data[:s], 2), 1, Array{Int64}[], nothing, 0)
 
     # Train quick IQL (may be fast) on this mdp + anon buffer
     π_iql, _, _ = quick_IQL(mdp, anon_buf)
@@ -232,10 +302,10 @@ function compare_iql_vs_true_policy(cache::Dict, e; gridsize::Int=80, solver_typ
         N = solver_params[1]
         epochs = solver_params[2]
         batch_size = solver_params[3]
-        _, π_true = RL.softq_policy(mdp; N=N, epochs=epochs, batch_size=batch_size)
+        _, π_true = RL.softq_policy(mdp; N = N, epochs = epochs, batch_size = batch_size)
     else
         # Default to MCTS-based planner
-        𝒮 = solver_from_type(mdp, :mcts; solver_params=solver_params)
+        𝒮 = solver_from_type(mdp, :mcts; solver_params = solver_params)
         # solver_from_type may return an array for :all; pick first if so
         if isa(𝒮, AbstractArray)
             𝒮 = 𝒮[1]
@@ -259,39 +329,44 @@ function compare_iql_vs_true_policy(cache::Dict, e; gridsize::Int=80, solver_typ
         elseif s in (:right, :east)
             return (1.0, 0.0)
         elseif s in (:up_right, :ne, :northeast)
-            v = 1/sqrt(2); return (v, v)
+            v = 1/sqrt(2);
+            return (v, v)
         elseif s in (:up_left, :nw, :northwest)
-            v = 1/sqrt(2); return (-v, v)
+            v = 1/sqrt(2);
+            return (-v, v)
         elseif s in (:down_right, :se, :southeast)
-            v = 1/sqrt(2); return (v, -v)
+            v = 1/sqrt(2);
+            return (v, -v)
         elseif s in (:down_left, :sw, :southwest)
-            v = 1/sqrt(2); return (-v, -v)
+            v = 1/sqrt(2);
+            return (-v, -v)
         else
             # fallback: map index -> angle
             idx = findfirst(x->x==asymb, as)
             if idx === nothing
                 return (0.0, 0.0)
             end
-            ang = 2π*(idx-1)/max(na,1)
+            ang = 2π*(idx-1)/max(na, 1)
             return (cos(ang), sin(ang))
         end
     end
 
     # Grid
-    xs, ys = Utils._grid_from_mdp(mdp; gridsize=gridsize)
-    nx = length(xs); ny = length(ys)
+    xs, ys = Utils._grid_from_mdp(mdp; gridsize = gridsize)
+    nx = length(xs);
+    ny = length(ys)
 
     U_true = zeros(Float64, ny, nx)
     V_true = zeros(Float64, ny, nx)
-    U_iql  = zeros(Float64, ny, nx)
-    V_iql  = zeros(Float64, ny, nx)
+    U_iql = zeros(Float64, ny, nx)
+    V_iql = zeros(Float64, ny, nx)
     Z_agree = zeros(Float64, ny, nx)
 
     @inbounds for (j, y) in enumerate(ys)
         for (i, x) in enumerate(xs)
             s = Priors._state_at_xy(mdp, x, y)
             obs = MuKumari.shape_state_as_obs(mdp, s)
-            
+
             # true action (planner) - for POMDP planners, pass observation/belief
             a_true = nothing
             try
@@ -331,25 +406,69 @@ function compare_iql_vs_true_policy(cache::Dict, e; gridsize::Int=80, solver_typ
             ux_t, vy_t = action_to_unit_vector(a_true)
             ux_i, vy_i = action_to_unit_vector(a_iql)
 
-            U_true[j,i] = ux_t
-            V_true[j,i] = vy_t
-            U_iql[j,i]  = ux_i
-            V_iql[j,i]  = vy_i
+            U_true[j, i] = ux_t
+            V_true[j, i] = vy_t
+            U_iql[j, i] = ux_i
+            V_iql[j, i] = vy_i
 
-            Z_agree[j,i] = (a_true == a_iql) ? 1.0 : 0.0
+            Z_agree[j, i] = (a_true == a_iql) ? 1.0 : 0.0
         end
     end
 
     # Build plots
-    p_true = show_quiver ? quiver(xs, ys, quiver=(U_true, V_true); aspect_ratio=1, title="Planner (true) policy", xlabel="x", ylabel="y") : heatmap(xs, ys, Z_agree; aspect_ratio=1, title="Planner actions (overlay suppressed)")
-    p_iql  = show_quiver ? quiver(xs, ys, quiver=(U_iql, V_iql); aspect_ratio=1, title="IQL learned policy", xlabel="x", ylabel="y") : heatmap(xs, ys, Z_agree; aspect_ratio=1, title="IQL actions (overlay suppressed)")
-    p_agree = heatmap(xs, ys, Z_agree; aspect_ratio=1, title="Action agreement (1=agree)", colorbar_title="agree")
+    p_true =
+        show_quiver ?
+        quiver(
+            xs,
+            ys,
+            quiver = (U_true, V_true);
+            aspect_ratio = 1,
+            title = "Planner (true) policy",
+            xlabel = "x",
+            ylabel = "y",
+        ) :
+        heatmap(
+            xs,
+            ys,
+            Z_agree;
+            aspect_ratio = 1,
+            title = "Planner actions (overlay suppressed)",
+        )
+    p_iql =
+        show_quiver ?
+        quiver(
+            xs,
+            ys,
+            quiver = (U_iql, V_iql);
+            aspect_ratio = 1,
+            title = "IQL learned policy",
+            xlabel = "x",
+            ylabel = "y",
+        ) :
+        heatmap(
+            xs,
+            ys,
+            Z_agree;
+            aspect_ratio = 1,
+            title = "IQL actions (overlay suppressed)",
+        )
+    p_agree = heatmap(
+        xs,
+        ys,
+        Z_agree;
+        aspect_ratio = 1,
+        title = "Action agreement (1=agree)",
+        colorbar_title = "agree",
+    )
 
-    p_all = plot(p_true, p_iql, p_agree; layout=(1,3), size=(1400,480))
+    p_all = plot(p_true, p_iql, p_agree; layout = (1, 3), size = (1400, 480))
 
     if savepath !== nothing
         isdir(savepath) || mkpath(savepath)
-        fname = joinpath(savepath, "iql_vs_true_id_$(rec[:id])_sweep_$(rec[:sweep])_level_$(rec[:level]).png")
+        fname = joinpath(
+            savepath,
+            "iql_vs_true_id_$(rec[:id])_sweep_$(rec[:sweep])_level_$(rec[:level]).png",
+        )
         savefig(p_all, fname)
         return fname
     end

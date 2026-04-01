@@ -1,10 +1,19 @@
 using Parameters: @with_kw
 using Gen
 
-export FourierDiscreteCfg, ScoreΠDist, MuEnvSpec, METHOD_LABELS, RunPack, actiondirac,
-    PriorDiscreteCfg, RBFDiscreteCfg,
-    ComponentField, RandomFourierField, RadialBasisField,
-    RLConfig, InferenceConfig
+export FourierDiscreteCfg,
+    ScoreΠDist,
+    MuEnvSpec,
+    METHOD_LABELS,
+    RunPack,
+    actiondirac,
+    PriorDiscreteCfg,
+    RBFDiscreteCfg,
+    ComponentField,
+    RandomFourierField,
+    RadialBasisField,
+    RLConfig,
+    InferenceConfig
 
 """
     PriorDiscreteCfg
@@ -47,10 +56,10 @@ Configuration for radial basis function (RBF) field prior.
 @with_kw struct RBFDiscreteCfg <: PriorDiscreteCfg
     Kmax::Int = 5
     λK::Float64 = 0.5             # P(N=n) ∝ exp(-λN*(n-1))
-    
+
     # Gaussian bandwidth
     σ::Float64 = 1.0
-    
+
     # Spatial bounds for RBF center placement
     x_min::Float64 = 0.0
     x_max::Float64 = 10.0
@@ -64,12 +73,12 @@ end
     # q_objs::Dict
     # n_compobj_list::Dict
     ## prior weights per proposal (key => weight)
-    n_qprop_list::Dict{Any,Float64} = Dict{Any,Float64}()
+    n_qprop_list::Dict{Any, Float64} = Dict{Any, Float64}()
     ## mdp cache (key => mdp)
-    n_propmdp_list::Dict{Any,Any} = Dict{Any,Any}()
+    n_propmdp_list::Dict{Any, Any} = Dict{Any, Any}()
     ## solver/policy caches (key => solver, policy)
-    n_𝒮_proposals::Dict{Any,Any} = Dict{Any,Any}()
-    n_π_proposals::Dict{Any,Any} = Dict{Any,Any}()
+    n_𝒮_proposals::Dict{Any, Any} = Dict{Any, Any}()
+    n_π_proposals::Dict{Any, Any} = Dict{Any, Any}()
     # solver_type::Symbol = :dql
     # solver_params::Vector = [:softq, 10000]
     ## carries action mappings used by inference_model
@@ -86,10 +95,10 @@ end
     μ_order::Vector{Symbol} = [:sin, :exp, :lin]
 end
 
-struct ActionDirac <: Gen.Distribution{AbstractVector}
-end
+struct ActionDirac <: Gen.Distribution{AbstractVector} end
 Gen.random(::ActionDirac, x::AbstractVector) = x
-Gen.logpdf(::ActionDirac, v::AbstractVector, x::AbstractVector) = (argmax(v) == argmax(x)) ? 0.0 : -Inf
+Gen.logpdf(::ActionDirac, v::AbstractVector, x::AbstractVector) =
+    (argmax(v) == argmax(x)) ? 0.0 : -Inf
 Gen.logpdf_grad(::ActionDirac, v, x) = (nothing,)
 Gen.has_output_grad(::ActionDirac) = false
 Gen.is_discrete(::ActionDirac) = true
@@ -210,7 +219,7 @@ Fields:
 @with_kw struct InferenceConfig
     component_tuples::Vector{Tuple}
     component_params_switch::Gen.Switch
-    component_type_sampler
+    component_type_sampler::Any
     k_components::Integer = 1
     rl_config::RLConfig = RLConfig()
     agent_params::Dict = Dict()
