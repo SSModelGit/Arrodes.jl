@@ -26,11 +26,18 @@ agent_params = Dict(
     ],
 )
 
-true_objective_fn = x -> (0.6 * cos(0.5*x[1, 1] + 0.5*x[1, 2] + π/4))
+true_objective_fn = x -> (0.6 * cos(0.5 * x[1, 1] + 0.5 * x[1, 2] + π / 4))
 mdp_objective = x -> (true_objective_fn(x.x), false)
 
 # For visualization: define (x, y) -> Real version
-true_objective_fn_viz = (x, y) -> 0.6 * cos(0.5*x + 0.5*y + π/4)
+true_objective_fn_viz = (x, y) -> 0.6 * cos(0.5 * x + 0.5 * y + π / 4)
+
+# RBF-style objective with peak at [7, 7]
+rbf_objective_fn = x -> (0.8 * exp(-((x[1, 1] - 7.0)^2 + (x[1, 2] - 7.0)^2) / (2 * 1.5^2)))
+rbf_mdp_objective = x -> (rbf_objective_fn(x.x), false)
+
+# For visualization: define (x, y) -> Real version
+rbf_objective_fn_viz = (x, y) -> 0.8 * exp(-((x - 7.0)^2 + (y - 7.0)^2) / (2 * 1.5^2))
 
 mdp = build_kagent_pomdp(agent_params, mdp_objective)
 
@@ -87,10 +94,8 @@ rbf_field = RadialBasisField(
     σ = 0.5,
 )
 
-component_tuples = [
-    (fourier_field, fourier_params_sampler(fourier_field)),
-    (rbf_field, rbf_params_sampler(rbf_field)),
-]
+component_tuples =
+    [(fourier_field, fourier_params_sampler(fourier_field)), (rbf_field, rbf_params_sampler(rbf_field))]
 
 # Configure inference
 param_switch, component_fields = build_component_param_switch(component_tuples)
@@ -113,11 +118,7 @@ config = InferenceConfig(
 
 # Run inference
 π_dist = ScoreΠDist(
-    mdp_params = [
-        alist,
-        a -> Float64.(Flux.onehot(a, alist)),
-        Float64.(Flux.onehotbatch(alist, alist)),
-    ],
+    mdp_params = [alist, a -> Float64.(Flux.onehot(a, alist)), Float64.(Flux.onehotbatch(alist, alist))],
 )
 
 n_particles = 10
@@ -163,8 +164,7 @@ gif(anim[2][1], "filter_evolution_curr.gif"; fps = anim[2][2])
 println("Animation saved to: filter_evolution_curr.gif")
 
 # Extract and display results
-best_idx, best_weight, comp_idxs, comp_params, obj_fn =
-    best_particle(pf_state, config, component_fields)
+best_idx, best_weight, comp_idxs, comp_params, obj_fn = best_particle(pf_state, config, component_fields)
 
 println("Inferred component: $(["Fourier", "RBF"][comp_idxs[1]])")
 println("Best particle weight: $best_weight")
