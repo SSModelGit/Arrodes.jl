@@ -178,9 +178,8 @@ function plot_particle_filter_frame(
     t::Int,
     pf_state,
     config::InferenceConfig,
-    component_fields::Vector,
     true_objective_fn::Function,
-    mdp::KAgentPOMDP,
+    true_mdp::KAgentPOMDP,
     agent_params::Dict,
     π_dist::ScoreΠDist;
     gridsize::Int = 120,
@@ -189,7 +188,7 @@ function plot_particle_filter_frame(
 )
 
     # Create grid and plot true objective using utility function
-    xs, ys = Utils._grid_from_mdp(mdp; gridsize = gridsize)
+    xs, ys = Utils._grid_from_mdp(true_mdp; gridsize = gridsize)
     Z = [true_objective_fn(x, y) for y in ys, x in xs]
 
     p = heatmap(
@@ -248,10 +247,10 @@ function plot_particle_filter_frame(
     if trace_from_current
         # Trajectory traces start from current observed state
         current_state_obs = state_data[1:2, t]  # Extract x, y coordinates
-        trace_starting_state = blindstart_KAgentState(mdp, reshape(current_state_obs, 1, 2))
+        trace_starting_state = blindstart_KAgentState(true_mdp, reshape(current_state_obs, 1, 2))
     else
         # Trajectory traces start from initial agent state
-        trace_starting_state = blindstart_KAgentState(mdp, agent_params[:start])
+        trace_starting_state = blindstart_KAgentState(true_mdp, agent_params[:start])
     end
 
     for (rank, particle_idx) in enumerate(top_indices)
@@ -272,20 +271,35 @@ function plot_particle_filter_frame(
             particle_key =
                 hash((component_idxs, [Dict(collect(p)) for p in component_params]))
 
-            # Get the learned policy from π_dist (already trained)
+            # Get the learned policy from π_dist (already trained
+            mdp = RL.ensure_mdp!(π_dist, particle_key)
             policy = RL.get_π_proposal(π_dist, particle_key, mdp, config)
 
             # Simulate forward from chosen starting state for remaining timesteps
-            if n_remaining > 0
+            if trace_from_current
+                if n_remaining > 0
                 sim_trace = stepthrough_sim(
                     mdp,
                     policy,
                     n_remaining;
                     start_state = trace_starting_state,
                 )
+                else
+                    sim_trace = []
+                end
             else
-                sim_trace = []
+                sim_trace = stepthrough_sim(mdp, policy, t; start_state = trace_starting_state)
             end
+            # if n_remaining > 0
+            #     sim_trace = stepthrough_sim(
+            #         mdp,
+            #         policy,
+            #         n_remaining;
+            #         start_state = trace_starting_state,
+            #     )
+            # else
+            #     sim_trace = []
+            # end
 
             # Extract x,y coordinates from simulation trace
             if length(sim_trace) > 0
@@ -329,8 +343,172 @@ function plot_particle_filter_frame(
     return p
 end
 
+function quick_heatmap(
+    p,
+    mdp;
+    gridsize::Int = 120,
+    objective_fn::Union{Nothing, Function} = nothing,
+    subplot::Union{Nothing, Int} = nothing,
+    title::AbstractString = "",
+    show_colorbar::Bool = false,
+)
+    xs, ys = Utils._grid_from_mdp(mdp; gridsize = gridsize)
+    if isnothing(objective_fn)
+        Z = [mdp.obj(blindstart_KAgentState(mdp, [x y]))[1] for y in ys, x in xs]
+    else
+        Z = [objective_fn(x, y) for y in ys, x in xs]
+    end
+
+    if isnothing(subplot)
+        return heatmap!(
+            p,
+            xs,
+            ys,
+            Z;
+            aspect_ratio = 1,
+            title = title,
+            xlabel = "x",
+            ylabel = "y",
+            legend = false,
+            colorbar = show_colorbar,
+        )
+    else
+        return heatmap!(
+            p,
+            xs,
+            ys,
+            Z;
+            aspect_ratio = 1,
+            title = title,
+            xlabel = "x",
+            ylabel = "y",
+            legend = false,
+            colorbar = show_colorbar,
+            subplot = subplot,
+        )
+    end
+end
+
 """
-    make_particle_filter_frame_fn(true_objective_fn::Function, mdp::KAgentPOMDP, 
+    plot_particle_heatmaps_frame(state_data::Matrix{Float64}, t::Int, pf_state, config::InferenceConfig, 
+                                 component_fields::Vector, true_objective_fn::Function, mdp::KAgentPOMDP, 
+                                 agent_params::Dict, π_dist::ScoreΠDist; gridsize::Int=120, n_top::Int=10,
+                                 trace_from_current::Bool=true)
+
+Generate a single frame visualization showing heatmaps for top particle objectives.
+
+Layout rule for top `n` particles:
+- Let `a = ceil(sqrt(n))`
+- Let `q = floor(n / a)` and `r = n mod a`
+- If `r != 0`, use `(q + 1) × (a + 1)` grid
+- If `r == 0`, use `q × (a + 1)` grid
+
+First column behavior:
+- `[1,1]` is the true objective heatmap
+- all other cells in first column are empty
+
+Remaining cells are filled left-to-right, top-to-bottom (skipping first column)
+with heatmaps of top-`n` particle objectives.
+
+# Arguments
+- `trace_from_current::Bool`: If true, trajectory traces start from current observed state.
+  If false, traces start from the initial agent state. (default: true)
+
+Returns a Plots.jl plot object.
+"""
+function plot_particle_heatmaps_frame(
+    pf_state,
+    config::InferenceConfig,
+    true_objective_fn::Function,
+    true_mdp::KAgentPOMDP,
+    π_dist::ScoreΠDist;
+    gridsize::Int = 120,
+    n_top::Int = 10,
+)
+
+    # Extract top particles by posterior weight
+    traces = pf_state.traces
+    log_weights = pf_state.log_weights
+    top_n = min(n_top, length(log_weights))
+
+    if top_n == 0
+        @error "stop this behavior"
+    end
+
+    a = ceil(Int, sqrt(top_n))
+    q = fld(top_n, a)
+    r = mod(top_n, a)
+
+    n_rows = iszero(r) ? q : (q + 1)
+    n_cols = a + 1
+
+    p = plot(
+        layout = (n_rows, n_cols),
+        legend = false,
+        size = (330 * n_cols, 280 * n_rows),
+    )
+
+    # First column: [1,1] true heatmap; all others intentionally empty
+    quick_heatmap(
+        p,
+        true_mdp;
+        gridsize = gridsize,
+        objective_fn = true_objective_fn,
+        subplot = 1,
+        title = "True Objective",
+        show_colorbar = true,
+    )
+
+    for row in 2:n_rows
+        first_col_idx = (row - 1) * n_cols + 1
+        plot!(p; subplot = first_col_idx, title = "", legend = false)
+    end
+
+    top_indices = sortperm(log_weights; rev = true)[1:top_n]
+
+    for (rank, particle_idx) in enumerate(top_indices)
+        trace = traces[particle_idx]
+
+        component_idxs = Vector{Int}(undef, config.k_components)
+        component_params = Vector{Dict}(undef, config.k_components)
+
+        for k in 1:config.k_components
+            idx, params = trace[k=>:component]
+            component_idxs[k] = idx
+            component_params[k] = params
+        end
+        # Reconstruct the particle key
+        particle_key = hash((component_idxs, [Dict(collect(p)) for p in component_params]))
+        mdp = RL.ensure_mdp!(π_dist, particle_key)
+
+        row = fld(rank - 1, a) + 1
+        col = mod(rank - 1, a) + 2
+        subplot_idx = (row - 1) * n_cols + col
+
+        quick_heatmap(
+            p,
+            mdp;
+            gridsize = gridsize,
+            objective_fn = nothing,
+            subplot = subplot_idx,
+            title = "Rank $rank",
+            show_colorbar = false,
+        )
+    end
+
+    return p
+end
+
+"""
+    make_particle_filter_frame_fn(
+    true_mdp::KAgentPOMDP,
+    true_objective_fn::Function,
+    agent_params::Dict,
+    π_dist::ScoreΠDist;
+    gridsize::Int = 120,
+    n_top::Int = 10,
+    trace_from_current::Bool = true,
+)
                                    agent_params::Dict, π_dist::ScoreΠDist;
                                    gridsize::Int=120, n_top::Int=10, predict_from_current::Bool=true)
 
@@ -353,7 +531,7 @@ A closure function ready to pass to `particle_filter(...; frame_fn=...)`
 """
 function make_particle_filter_frame_fn(
     true_objective_fn::Function,
-    mdp::KAgentPOMDP,
+    true_mdp::KAgentPOMDP,
     agent_params::Dict,
     π_dist::ScoreΠDist;
     gridsize::Int = 120,
@@ -361,7 +539,43 @@ function make_particle_filter_frame_fn(
     trace_from_current::Bool = true,
 )
 
-    component_fields = nothing  # Will be bound from config when called
+    return function frame_fn(
+        state_data::Matrix{Float64},
+        t::Int,
+        pf_state,
+        config::InferenceConfig,
+    )
+        return plot_particle_filter_frame(
+            state_data,
+            t,
+            pf_state,
+            config,
+            true_objective_fn,
+            true_mdp,
+            agent_params,
+            π_dist;
+            gridsize = gridsize,
+            n_top = n_top,
+            trace_from_current = trace_from_current,
+        )
+    end
+end
+
+"""
+    make_particle_heatmaps_frame_fn(true_objective_fn::Function, mdp::KAgentPOMDP,
+                                    agent_params::Dict, π_dist::ScoreΠDist;
+                                    gridsize::Int=120, n_top::Int=10,
+                                    trace_from_current::Bool=true)
+
+Create a frame-generation function for use with `plot_particle_heatmaps_frame`.
+"""
+function make_particle_heatmaps_frame_fn(
+    true_objective_fn::Function,
+    true_mdp::KAgentPOMDP,
+    π_dist::ScoreΠDist;
+    gridsize::Int = 120,
+    n_top::Int = 10,
+)
 
     return function frame_fn(
         state_data::Matrix{Float64},
@@ -369,23 +583,16 @@ function make_particle_filter_frame_fn(
         pf_state,
         config::InferenceConfig,
     )
-        if isnothing(component_fields)
-            component_fields = [tuple[1] for tuple in config.component_tuples]
-        end
 
-        return plot_particle_filter_frame(
-            state_data,
-            t,
+        _ = (state_data, t)
+        return plot_particle_heatmaps_frame(
             pf_state,
             config,
-            component_fields,
             true_objective_fn,
-            mdp,
-            agent_params,
+            true_mdp,
             π_dist;
             gridsize = gridsize,
-            n_top = n_top,
-            trace_from_current = trace_from_current,
+            n_top = n_top
         )
     end
 end

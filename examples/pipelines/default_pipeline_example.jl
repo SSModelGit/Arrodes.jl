@@ -8,6 +8,8 @@ using Plots
 import GeoInterface as GI
 
 rng = Random.MersenneTwister(42)
+examples_dir = @__DIR__
+PLOTS_DIR = joinpath(examples_dir, "res")
 
 ######################
 # OBSERVED AGENT SETUP
@@ -17,7 +19,7 @@ spec = MuEnvSpec()
 menv = build_shared_menv(spec)
 
 agent_params = Dict(
-    :start => [3.0 4.0],
+    :start => [4.0 4.0],
     :dimensions => (0.0, 10.0),
     :menv => menv,
     :obcs => [
@@ -26,18 +28,18 @@ agent_params = Dict(
     ],
 )
 
-true_objective_fn = x -> (0.6 * cos(0.5 * x[1, 1] + 0.5 * x[1, 2] + π / 4))
-mdp_objective = x -> (true_objective_fn(x.x), false)
+fourier_objective_fn = x -> (0.6 * cos(0.5 * x[1, 1] + 0.5 * x[1, 2] + π / 4))
+# mdp_objective = x -> (fourier_objective_fn(x.x), false)
 
-# For visualization: define (x, y) -> Real version
-true_objective_fn_viz = (x, y) -> 0.6 * cos(0.5 * x + 0.5 * y + π / 4)
+# # For visualization: define (x, y) -> Real version
+# true_objective_fn_viz = (x, y) -> 0.6 * cos(0.5 * x + 0.5 * y + π / 4)
 
 # RBF-style objective with peak at [7, 7]
 rbf_objective_fn = x -> (0.8 * exp(-((x[1, 1] - 7.0)^2 + (x[1, 2] - 7.0)^2) / (2 * 1.5^2)))
-rbf_mdp_objective = x -> (rbf_objective_fn(x.x), false)
+mdp_objective = x -> (rbf_objective_fn(x.x), false)
 
 # For visualization: define (x, y) -> Real version
-rbf_objective_fn_viz = (x, y) -> 0.8 * exp(-((x - 7.0)^2 + (y - 7.0)^2) / (2 * 1.5^2))
+true_objective_fn_viz = (x, y) -> 0.8 * exp(-((x - 7.0)^2 + (y - 7.0)^2) / (2 * 1.5^2))
 
 mdp = build_kagent_pomdp(agent_params, mdp_objective)
 
@@ -143,6 +145,14 @@ frame_fn2 = make_particle_filter_frame_fn(
     trace_from_current = true,
 )
 
+frame_fn3 = make_particle_heatmaps_frame_fn(
+    true_objective_fn_viz,
+    mdp,
+    π_dist;
+    gridsize = 120,
+    n_top = 10,
+)
+
 # Run particle filter with frame recording
 pf_state, frameset = particle_filter(
     observations,
@@ -150,18 +160,31 @@ pf_state, frameset = particle_filter(
     π_dist,
     state_data,
     n_particles;
-    frame_fns = [frame_fn1, frame_fn2],
+    frame_fns = [frame_fn1, frame_fn2, frame_fn3],
 )
 
-# Generate animation from frames
-anim = [animate_particle_filter_from_frames(frames; fps = 2) for frames in frameset]
+anim_names = ["filter_evolution_start", "filter_evolution_curr", "filter_evolution_heatmaps"]
 
-# Save animation with proper fps
-gif(anim[1][1], "filter_evolution_start.gif"; fps = anim[1][2])
-println("Animation saved to: filter_evolution_start.gif")
+for (i, frames) in enumerate(frameset)
+    anim = animate_particle_filter_from_frames(frames; fps = 2)
+    pth = joinpath(PLOTS_DIR, anim_names[i])
+    mkpath(pth)
+    for (j, frame) in enumerate(frames)
+        savefig(frame, joinpath(pth, anim_names[i]*"_$(j).png"))
+    end
+    gif(anim[1], joinpath(pth, anim_names[i]*".gif"); fps = anim[2])
+    println("Animation saved to: $(pth)")
+end
 
-gif(anim[2][1], "filter_evolution_curr.gif"; fps = anim[2][2])
-println("Animation saved to: filter_evolution_curr.gif")
+# # Generate animation from frames
+# anim = [animate_particle_filter_from_frames(frames; fps = 2) for frames in frameset]
+
+# # Save animation with proper fps
+# gif(anim[1][1], "filter_evolution_start.gif"; fps = anim[1][2])
+# println("Animation saved to: filter_evolution_start.gif")
+
+# gif(anim[2][1], "filter_evolution_curr.gif"; fps = anim[2][2])
+# println("Animation saved to: filter_evolution_curr.gif")
 
 # Extract and display results
 best_idx, best_weight, comp_idxs, comp_params, obj_fn = best_particle(pf_state, config, component_fields)
@@ -184,4 +207,4 @@ p = Visualizations.plot_particle_filter_explanation(
 )
 
 display(p)
-savefig(p, "final_particle_filter_state.png")
+savefig(p, joinpath(PLOTS_DIR, "final_particle_filter_state.png"))

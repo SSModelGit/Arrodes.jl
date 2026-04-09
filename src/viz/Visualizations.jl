@@ -30,7 +30,9 @@ export plot_top_objective_with_trajectories,
 include("filter_explanations.jl")
 export plot_particle_filter_explanation,
     plot_particle_filter_frame,
+    plot_particle_heatmaps_frame,
     make_particle_filter_frame_fn,
+    make_particle_heatmaps_frame_fn,
     animate_particle_filter_from_frames
 
 include("ablation_plots.jl")
