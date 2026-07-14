@@ -43,7 +43,7 @@ end
 
 Grid over (x,y) spanning mdp.dimensions.
 """
-function _grid_from_mdp(mdp::KAgentPOMDP; gridsize::Int=100)
+function _grid_from_mdp(mdp; gridsize::Int=100)
     lo, hi = _dims_to_bounds(mdp.dimensions)
     xs = range(lo, hi; length=gridsize)
     ys = range(lo, hi; length=gridsize)

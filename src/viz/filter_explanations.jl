@@ -1,617 +1,248 @@
-
-"""
-    plot_particle_filter_explanation(pf_state, config::InferenceConfig, 
-                                     component_fields::Vector, true_objective_fn,
-                                     state_data::Matrix, agent_params::Dict,
-                                     π_dist::ScoreΠDist, mdp::KAgentPOMDP;
-                                     gridsize::Int=180, n_top::Int=10)
-
-Visualize what the particle filter is thinking by showing:
-1. Heatmap of the true objective over the MDP domain
-2. Simulated trajectories from the top N particles (ranked by posterior weight)
-   - Darker dots = higher ranked particle
-   - Lighter dots = lower ranked particle
-3. Observed trajectory in red
-
-# Arguments
-- `pf_state`: Particle filter state from inference
-- `config::InferenceConfig`: Configuration used for inference
-- `component_fields::Vector`: Component field specifications
-- `true_objective_fn`: Ground truth objective function (x, y) -> Real
-- `state_data::Matrix`: Observed state trajectory (features × timesteps)
-- `agent_params::Dict`: Agent configuration dict
-- `π_dist::ScoreΠDist`: Cached policy distribution
-- `mdp::KAgentPOMDP`: Original MDP
-- `gridsize::Int`: Resolution of heatmap grid
-- `n_top::Int`: Number of top particles to visualize
-
-Returns a Plots.jl plot object.
-"""
-function plot_particle_filter_explanation(
-    pf_state,
-    config::InferenceConfig,
-    component_fields::Vector,
-    true_objective_fn,
-    state_data::Matrix,
-    agent_params::Dict,
-    π_dist::ScoreΠDist,
-    mdp::KAgentPOMDP;
-    gridsize::Int = 180,
-    n_top::Int = 10,
-)
-
-    # Extract observed trajectory
-    obs_x, obs_y = Utils.xy_path_from_state_matrix(state_data)
-
-    # Create objective heatmap grid
-    xs, ys = Utils._grid_from_mdp(mdp; gridsize = gridsize)
-    Z_true = [true_objective_fn(x, y) for y in ys, x in xs]
-
-    # Initialize plot with true objective heatmap
-    p = heatmap(
-        xs,
-        ys,
-        Z_true;
-        aspect_ratio = 1,
-        dpi = 220,
-        size = (1000, 900),
-        title = "Particle Filter Explanation: Top $(min(n_top, length(pf_state.traces))) Particles",
-        xlabel = "x (world units)",
-        ylabel = "y (world units)",
-        colorbar_title = "True Objective",
-        legend = :outertopleft,
-        legendfontsize = 8,
-        margin = 5Plots.mm,
-    )
-
-    # Get traces and weights, sort by weight descending
-    traces = pf_state.traces
-    log_weights = pf_state.log_weights
-
-    n_particles = length(traces)
-    top_n = min(n_top, n_particles)
-
-    # Get indices of top particles by weight
-    _, top_indices = findmax(log_weights), nothing
-    sorted_indices = sortperm(log_weights; rev = true)
-    top_indices = sorted_indices[1:top_n]
-
-    # Starting position for all rollouts
-    start_state = blindstart_KAgentState(mdp, agent_params[:start])
-    n_timesteps = size(state_data, 2)
-
-    # Plot each top particle's trajectory
-    for (rank, particle_idx) in enumerate(top_indices)
-        trace = traces[particle_idx]
-        log_weight = log_weights[particle_idx]
-
-        # Extract component info to compute config_key
-        component_idxs = Vector{Int}(undef, config.k_components)
-        component_params = Vector{Dict}(undef, config.k_components)
-
-        for k in 1:config.k_components
-            idx, params = trace[k=>:component]
-            component_idxs[k] = idx
-            component_params[k] = params
+function _state_xy(state)
+    if hasproperty(state, :x)
+        coordinates = getproperty(state, :x)
+        if coordinates isa AbstractMatrix
+            return (Float64(coordinates[1, 1]), Float64(coordinates[1, 2]))
+        elseif coordinates isa AbstractVector && !isempty(coordinates) && first(coordinates) isa Tuple
+            point = first(coordinates)
+            return (Float64(point[1]), Float64(point[2]))
+        elseif coordinates isa AbstractVector
+            return (Float64(coordinates[1]), Float64(coordinates[2]))
         end
-
-        # Reconstruct the config_key (needed to retrieve policy from π_dist)
-        particle_key = hash((component_idxs, [Dict(collect(p)) for p in component_params]))
-
-        # Get the learned policy from π_dist (already trained)
-        policy = RL.get_π_proposal(π_dist, particle_key, mdp, config)
-
-        # Run simulation with learned policy
-        sim_trace = stepthrough_sim(mdp, policy, n_timesteps)
-
-        # Extract x,y coordinates from simulation trace
-        sim_xs = [stateaction[1].x[1, 1] for stateaction in sim_trace]
-        sim_ys = [stateaction[1].x[1, 2] for stateaction in sim_trace]
-
-        # Compute color: darker for higher rank (darker = closer to black)
-        # rank 1 -> very dark gray, rank n -> lighter gray
-        # Interpolate grayscale value from 0.1 (very dark) to 0.7 (light gray)
-        gray_value = 0.1 + (rank - 1.0) / max(1.0, top_n - 1.0) * 0.6
-
-        # Use grayscale color from Plots (0 = black, 1 = white)
-        marker_color = Gray(gray_value)
-
-        # Plot line connecting the trajectory points (dotted, no legend)
-        plot!(
-            p,
-            sim_xs,
-            sim_ys;
-            linewidth = 1.5,
-            linestyle = :dot,
-            alpha = 0.6,
-            color = marker_color,
-            label = "",
-        )
-
-        # Plot particle trajectory as scatter with darkness based on rank
-        scatter!(
-            p,
-            sim_xs,
-            sim_ys;
-            label = "$rank: $(@sprintf("%.2f", log_weight))",
-            markersize = 4,
-            alpha = 0.8,
-            color = marker_color,
-        )
+    elseif state isa AbstractMatrix
+        return (Float64(state[1, 1]), Float64(state[1, 2]))
+    elseif state isa AbstractVector
+        return (Float64(state[1]), Float64(state[2]))
     end
+    throw(ArgumentError("cannot extract x/y coordinates from $(typeof(state))"))
+end
 
-    # Plot observed trajectory in red
-    scatter!(
-        p,
-        obs_x,
-        obs_y;
-        label = "observed",
-        markersize = 5,
-        color = :red,
-        markerstrokewidth = 0,
+_objective_scalar(value) = value isa Real ? Float64(value) : Float64(first(value))
+
+function _filter_state_at(result::AbstractInferenceResult, timestep::Int)
+    1 <= timestep <= size(result.posterior_history, 2) ||
+        throw(BoundsError(result.posterior_history, (:, timestep)))
+    final_state = result.state
+    config = final_state isa SMCFilterState ? final_state.config.model : final_state.config
+    weights = log.(result.posterior_history[:, timestep])
+    return DiscreteFilterState(
+        config,
+        final_state.cache,
+        weights,
+        timestep,
+        Any[final_state.states[1:timestep]...],
+        Any[final_state.actions[1:timestep]...],
+        result.log_evidence_history[timestep],
     )
+end
 
-    return p
+function _plot_bounds(mdp)
+    hasproperty(mdp, :dimensions) || throw(ArgumentError(
+        "visualization requires `mdp.dimensions` or explicit bounds"))
+    lo, hi = getproperty(mdp, :dimensions)
+    return (Float64(lo), Float64(hi))
+end
+
+function _objective_grid(mdp, config, xs, ys)
+    values = Matrix{Float64}(undef, length(ys), length(xs))
+    for (j, y) in enumerate(ys), (i, x) in enumerate(xs)
+        state = config.state_adapter(mdp, [x, y], 1)
+        values[j, i] = _objective_scalar(mdp.obj(state))
+    end
+    return values
+end
+
+function _true_grid(true_objective_fn, true_mdp, config, xs, ys)
+    if !isnothing(true_objective_fn)
+        return [Float64(true_objective_fn(x, y)) for y in ys, x in xs]
+    end
+    isnothing(true_mdp) && return nothing
+    return _objective_grid(true_mdp, config, xs, ys)
+end
+
+function _observed_xy(state::DiscreteFilterState, timestep::Int)
+    points = [_state_xy(state.states[t]) for t in 1:timestep]
+    return (first.(points), last.(points))
+end
+
+function _planner_context(filter_state, hypothesis, mdp, initial_state, horizon)
+    return PlanningContext(
+        hypothesis_id = hypothesis.id,
+        timestep = 1,
+        states = Any[initial_state],
+        actions = Any[],
+        horizon = horizon,
+        rng = MersenneTwister(hash((filter_state.config.seed, hypothesis.id, :visualization))),
+        metadata = hypothesis.metadata,
+    )
+end
+
+function _planned_path(filter_state, hypothesis, mdp; from_current::Bool, horizon::Int)
+    observation = from_current ? last(filter_state.states) : first(filter_state.states)
+    observed_index = from_current ? filter_state.timestep : 1
+    initial_state = filter_state.config.state_adapter(mdp, observation, observed_index)
+    context = _planner_context(filter_state, hypothesis, mdp, initial_state, horizon)
+    artifact = prepare_cached!(
+        filter_state.cache,
+        hypothesis.behavior.planner,
+        mdp,
+        context,
+    )
+    path = rollout(
+        hypothesis.behavior.planner,
+        deepcopy(artifact),
+        mdp,
+        initial_state,
+        horizon,
+        context,
+    )
+    return [_state_xy(state) for state in path.states]
+end
+
+function _top_hypotheses(filter_state, n_top)
+    count = min(n_top, length(filter_state.config.hypotheses))
+    indices = sortperm(filter_state.log_weights; rev = true)[1:count]
+    return [(index = i, hypothesis = filter_state.config.hypotheses[i],
+        probability = exp(filter_state.log_weights[i])) for i in indices]
+end
+
+"""Plot one objective field, optionally with an observed path overlay."""
+function quick_heatmap(mdp, config::DiscreteInferenceConfig; gridsize::Int = 100,
+                       title::AbstractString = "Objective", observed_states = nothing)
+    lo, hi = _plot_bounds(mdp)
+    xs = range(lo, hi; length = gridsize)
+    ys = range(lo, hi; length = gridsize)
+    panel = heatmap(xs, ys, _objective_grid(mdp, config, xs, ys);
+        aspect_ratio = :equal, color = :viridis, title = title, xlabel = "x", ylabel = "y")
+    if !isnothing(observed_states) && !isempty(observed_states)
+        points = [_state_xy(state) for state in observed_states]
+        plot!(panel, first.(points), last.(points); color = :red, linewidth = 2,
+            marker = :circle, label = "observed")
+    end
+    return panel
 end
 
 """
-    plot_particle_filter_frame(state_data::Matrix{Float64}, t::Int, pf_state, config::InferenceConfig, 
-                                component_fields::Vector, true_objective_fn::Function, mdp::KAgentPOMDP, 
-                                agent_params::Dict, π_dist::ScoreΠDist; gridsize::Int=120, n_top::Int=10,
-                                trace_from_current::Bool=true)
-
-Generate a single frame visualization of the particle filter state at timestep t.
-
-Shows:
-- True objective function as heatmap
-- Observed trajectory up to timestep t (bright to dull dots with connecting line)
-- Top 10 particle predictions for remaining timesteps (gray lines, darkness by rank)
-
-# Arguments
-- `trace_from_current::Bool`: If true, trajectory traces start from current observed state.
-  If false, traces start from the initial agent state. (default: true)
-
-Returns a Plots.jl plot object.
+Frame showing the true field, observed trajectory, top hypothesis plan rollouts, and
+the complete discrete posterior at a given timestep.
 """
 function plot_particle_filter_frame(
-    state_data::Matrix{Float64},
-    t::Int,
-    pf_state,
-    config::InferenceConfig,
-    true_objective_fn::Function,
-    true_mdp::KAgentPOMDP,
-    agent_params::Dict,
-    π_dist::ScoreΠDist;
-    gridsize::Int = 120,
-    n_top::Int = 10,
-    trace_from_current::Bool = true,
+    result::AbstractInferenceResult,
+    timestep::Int;
+    true_objective_fn = nothing,
+    true_mdp = nothing,
+    gridsize::Int = 100,
+    n_top::Int = 5,
+    trace_from_current::Bool = false,
+    rollout_horizon::Int = size(result.posterior_history, 2),
 )
-
-    # Create grid and plot true objective using utility function
-    xs, ys = Utils._grid_from_mdp(true_mdp; gridsize = gridsize)
-    Z = [true_objective_fn(x, y) for y in ys, x in xs]
-
-    p = heatmap(
-        xs,
-        ys,
-        Z;
-        aspect_ratio = 1,
-        title = "Particle Filter State at Timestep $t",
-        xlabel = "x",
-        ylabel = "y",
-        legend = false,
-    )
-
-    # Plot observed trajectory up to timestep t
-    obs_x, obs_y = Utils.xy_path_from_state_matrix(state_data[:, 1:t])
-
-    # Dull dots for history
-    if t > 1
-        scatter!(
-            p,
-            obs_x[1:(end-1)],
-            obs_y[1:(end-1)];
-            label = "history",
-            markersize = 3,
-            color = :red,
-            alpha = 0.3,
-            markerstrokewidth = 0,
-        )
+    filter_state = _filter_state_at(result, timestep)
+    reference_mdp = isnothing(true_mdp) ?
+        hypothesis_mdp(filter_state, first(filter_state.config.hypotheses)) : true_mdp
+    lo, hi = _plot_bounds(reference_mdp)
+    xs = range(lo, hi; length = gridsize)
+    ys = range(lo, hi; length = gridsize)
+    background = _true_grid(true_objective_fn, true_mdp, filter_state.config, xs, ys)
+    if isnothing(background)
+        best = _top_hypotheses(filter_state, 1)[1].hypothesis
+        background = _objective_grid(hypothesis_mdp(filter_state, best), filter_state.config, xs, ys)
     end
 
-    # Bright dot for current position
-    scatter!(
-        p,
-        [obs_x[end]],
-        [obs_y[end]];
-        label = "current obs",
-        markersize = 6,
-        color = :red,
-        markerstrokewidth = 0,
-    )
+    field_panel = heatmap(xs, ys, background; aspect_ratio = :equal, color = :viridis,
+        xlabel = "x", ylabel = "y", title = "Behavioral plans at t=$timestep")
+    observed_x, observed_y = _observed_xy(filter_state, timestep)
+    plot!(field_panel, observed_x, observed_y; color = :red, linewidth = 3,
+        marker = :circle, label = "observed")
 
-    # Line connecting observations
-    plot!(p, obs_x, obs_y; label = "path", color = :red, alpha = 0.5, linewidth = 1)
-
-    # Extract top particles
-    traces = pf_state.traces
-    log_weights = pf_state.log_weights
-
-    # Get indices sorted by log_weights (descending)
-    top_indices = sortperm(log_weights; rev = true)[1:min(n_top, length(log_weights))]
-
-    n_timesteps = size(state_data, 2)
-    n_remaining = n_timesteps - t
-
-    # Determine starting point for trajectory traces based on keyword argument
-    if trace_from_current
-        # Trajectory traces start from current observed state
-        current_state_obs = state_data[1:2, t]  # Extract x, y coordinates
-        trace_starting_state = blindstart_KAgentState(true_mdp, reshape(current_state_obs, 1, 2))
-    else
-        # Trajectory traces start from initial agent state
-        trace_starting_state = blindstart_KAgentState(true_mdp, agent_params[:start])
-    end
-
-    for (rank, particle_idx) in enumerate(top_indices)
+    palette = distinguishable_colors(max(n_top, 1), [RGB(1, 1, 1), RGB(0, 0, 0)])
+    for (rank, entry) in enumerate(_top_hypotheses(filter_state, n_top))
+        mdp = hypothesis_mdp(filter_state, entry.hypothesis)
         try
-            # Extract component info directly from trace (following plot_particle_filter_explanation pattern)
-            trace = traces[particle_idx]
-
-            component_idxs = Vector{Int}(undef, config.k_components)
-            component_params = Vector{Dict}(undef, config.k_components)
-
-            for k in 1:config.k_components
-                idx, params = trace[k=>:component]
-                component_idxs[k] = idx
-                component_params[k] = params
-            end
-
-            # Reconstruct the particle key
-            particle_key =
-                hash((component_idxs, [Dict(collect(p)) for p in component_params]))
-
-            # Get the learned policy from π_dist (already trained
-            mdp = RL.ensure_mdp!(π_dist, particle_key)
-            policy = RL.get_π_proposal(π_dist, particle_key, mdp, config)
-
-            # Simulate forward from chosen starting state for remaining timesteps
-            if trace_from_current
-                if n_remaining > 0
-                sim_trace = stepthrough_sim(
-                    mdp,
-                    policy,
-                    n_remaining;
-                    start_state = trace_starting_state,
-                )
-                else
-                    sim_trace = []
-                end
-            else
-                sim_trace = stepthrough_sim(mdp, policy, t; start_state = trace_starting_state)
-            end
-            # if n_remaining > 0
-            #     sim_trace = stepthrough_sim(
-            #         mdp,
-            #         policy,
-            #         n_remaining;
-            #         start_state = trace_starting_state,
-            #     )
-            # else
-            #     sim_trace = []
-            # end
-
-            # Extract x,y coordinates from simulation trace
-            if length(sim_trace) > 0
-                sim_xs = [stateaction[1].x[1, 1] for stateaction in sim_trace]
-                sim_ys = [stateaction[1].x[1, 2] for stateaction in sim_trace]
-
-                # Compute color: darker for higher rank
-                gray_value = 0.1 + (rank - 1.0) / max(1.0, n_top - 1.0) * 0.6
-                marker_color = Gray(gray_value)
-
-                # Plot prediction as dashed line with darkness based on rank
-                plot!(
-                    p,
-                    sim_xs,
-                    sim_ys;
-                    linewidth = 1.5,
-                    linestyle = :dash,
-                    alpha = 0.6,
-                    color = marker_color,
-                    label = "",
-                )
-
-                scatter!(
-                    p,
-                    sim_xs,
-                    sim_ys;
-                    label = "",
-                    markersize = 3,
-                    alpha = 0.7,
-                    color = marker_color,
-                    markerstrokewidth = 0,
-                )
-            end
-
-        catch e
-            # Skip particles that fail (e.g., solver issues)
-            @warn "Failed to process particle $particle_idx: $e"
+            points = _planned_path(filter_state, entry.hypothesis, mdp;
+                from_current = trace_from_current, horizon = rollout_horizon)
+            isempty(points) && continue
+            label = "$(entry.hypothesis.id) ($(round(entry.probability; digits = 3)))"
+            plot!(field_panel, first.(points), last.(points); color = palette[rank],
+                linewidth = 2, linestyle = :dash, marker = :diamond, label = label)
+        catch error
+            @warn "Could not visualize hypothesis plan" hypothesis = entry.hypothesis.id exception = error
         end
     end
 
-    return p
+    hypotheses = filter_state.config.hypotheses
+    probabilities = exp.(filter_state.log_weights)
+    posterior_panel = bar(string.(getfield.(hypotheses, :id)), probabilities;
+        ylim = (0, 1), legend = false, color = :steelblue,
+        xlabel = "objective hypothesis", ylabel = "posterior probability",
+        title = "Exact hypothesis posterior")
+    return plot(field_panel, posterior_panel; layout = (1, 2), size = (1200, 520))
 end
 
-function quick_heatmap(
-    p,
-    mdp;
-    gridsize::Int = 120,
-    objective_fn::Union{Nothing, Function} = nothing,
-    subplot::Union{Nothing, Int} = nothing,
-    title::AbstractString = "",
-    show_colorbar::Bool = false,
-)
-    xs, ys = Utils._grid_from_mdp(mdp; gridsize = gridsize)
-    if isnothing(objective_fn)
-        Z = [mdp.obj(blindstart_KAgentState(mdp, [x y]))[1] for y in ys, x in xs]
-    else
-        Z = [objective_fn(x, y) for y in ys, x in xs]
-    end
-
-    if isnothing(subplot)
-        return heatmap!(
-            p,
-            xs,
-            ys,
-            Z;
-            aspect_ratio = 1,
-            title = title,
-            xlabel = "x",
-            ylabel = "y",
-            legend = false,
-            colorbar = show_colorbar,
-        )
-    else
-        return heatmap!(
-            p,
-            xs,
-            ys,
-            Z;
-            aspect_ratio = 1,
-            title = title,
-            xlabel = "x",
-            ylabel = "y",
-            legend = false,
-            colorbar = show_colorbar,
-            subplot = subplot,
-        )
-    end
+"""Final diagnostic view, equivalent to the former final particle explanation plot."""
+function plot_particle_filter_explanation(result::AbstractInferenceResult; kwargs...)
+    return plot_particle_filter_frame(result, size(result.posterior_history, 2); kwargs...)
 end
 
-"""
-    plot_particle_heatmaps_frame(state_data::Matrix{Float64}, t::Int, pf_state, config::InferenceConfig, 
-                                 component_fields::Vector, true_objective_fn::Function, mdp::KAgentPOMDP, 
-                                 agent_params::Dict, π_dist::ScoreΠDist; gridsize::Int=120, n_top::Int=10,
-                                 trace_from_current::Bool=true)
-
-Generate a single frame visualization showing heatmaps for top particle objectives.
-
-Layout rule for top `n` particles:
-- Let `a = ceil(sqrt(n))`
-- Let `q = floor(n / a)` and `r = n mod a`
-- If `r != 0`, use `(q + 1) × (a + 1)` grid
-- If `r == 0`, use `q × (a + 1)` grid
-
-First column behavior:
-- `[1,1]` is the true objective heatmap
-- all other cells in first column are empty
-
-Remaining cells are filled left-to-right, top-to-bottom (skipping first column)
-with heatmaps of top-`n` particle objectives.
-
-# Arguments
-- `trace_from_current::Bool`: If true, trajectory traces start from current observed state.
-  If false, traces start from the initial agent state. (default: true)
-
-Returns a Plots.jl plot object.
-"""
+"""Frame containing the true objective and individual top-hypothesis objective maps."""
 function plot_particle_heatmaps_frame(
-    pf_state,
-    config::InferenceConfig,
-    true_objective_fn::Function,
-    true_mdp::KAgentPOMDP,
-    π_dist::ScoreΠDist;
-    gridsize::Int = 120,
-    n_top::Int = 10,
+    result::AbstractInferenceResult,
+    timestep::Int;
+    true_objective_fn = nothing,
+    true_mdp = nothing,
+    gridsize::Int = 100,
+    n_top::Int = 5,
 )
+    filter_state = _filter_state_at(result, timestep)
+    reference_mdp = isnothing(true_mdp) ?
+        hypothesis_mdp(filter_state, first(filter_state.config.hypotheses)) : true_mdp
+    lo, hi = _plot_bounds(reference_mdp)
+    xs = range(lo, hi; length = gridsize)
+    ys = range(lo, hi; length = gridsize)
+    observed_x, observed_y = _observed_xy(filter_state, timestep)
+    panels = Any[]
 
-    # Extract top particles by posterior weight
-    traces = pf_state.traces
-    log_weights = pf_state.log_weights
-    top_n = min(n_top, length(log_weights))
-
-    if top_n == 0
-        @error "stop this behavior"
+    true_grid = _true_grid(true_objective_fn, true_mdp, filter_state.config, xs, ys)
+    if !isnothing(true_grid)
+        panel = heatmap(xs, ys, true_grid; aspect_ratio = :equal, color = :viridis,
+            title = "True objective", xlabel = "x", ylabel = "y")
+        plot!(panel, observed_x, observed_y; color = :red, linewidth = 2,
+            marker = :circle, label = false)
+        push!(panels, panel)
     end
 
-    a = ceil(Int, sqrt(top_n))
-    q = fld(top_n, a)
-    r = mod(top_n, a)
-
-    n_rows = iszero(r) ? q : (q + 1)
-    n_cols = a + 1
-
-    p = plot(
-        layout = (n_rows, n_cols),
-        legend = false,
-        size = (330 * n_cols, 280 * n_rows),
-    )
-
-    # First column: [1,1] true heatmap; all others intentionally empty
-    quick_heatmap(
-        p,
-        true_mdp;
-        gridsize = gridsize,
-        objective_fn = true_objective_fn,
-        subplot = 1,
-        title = "True Objective",
-        show_colorbar = true,
-    )
-
-    for row in 2:n_rows
-        first_col_idx = (row - 1) * n_cols + 1
-        plot!(p; subplot = first_col_idx, title = "", legend = false)
+    for entry in _top_hypotheses(filter_state, n_top)
+        mdp = hypothesis_mdp(filter_state, entry.hypothesis)
+        panel = heatmap(xs, ys, _objective_grid(mdp, filter_state.config, xs, ys);
+            aspect_ratio = :equal, color = :viridis, xlabel = "x", ylabel = "y",
+            title = "$(entry.hypothesis.id): p=$(round(entry.probability; digits = 3))")
+        plot!(panel, observed_x, observed_y; color = :red, linewidth = 2,
+            marker = :circle, label = false)
+        push!(panels, panel)
     end
-
-    top_indices = sortperm(log_weights; rev = true)[1:top_n]
-
-    for (rank, particle_idx) in enumerate(top_indices)
-        trace = traces[particle_idx]
-
-        component_idxs = Vector{Int}(undef, config.k_components)
-        component_params = Vector{Dict}(undef, config.k_components)
-
-        for k in 1:config.k_components
-            idx, params = trace[k=>:component]
-            component_idxs[k] = idx
-            component_params[k] = params
-        end
-        # Reconstruct the particle key
-        particle_key = hash((component_idxs, [Dict(collect(p)) for p in component_params]))
-        mdp = RL.ensure_mdp!(π_dist, particle_key)
-
-        row = fld(rank - 1, a) + 1
-        col = mod(rank - 1, a) + 2
-        subplot_idx = (row - 1) * n_cols + col
-
-        quick_heatmap(
-            p,
-            mdp;
-            gridsize = gridsize,
-            objective_fn = nothing,
-            subplot = subplot_idx,
-            title = "Rank $rank",
-            show_colorbar = false,
-        )
-    end
-
-    return p
+    columns = ceil(Int, sqrt(length(panels)))
+    rows = ceil(Int, length(panels) / columns)
+    return plot(panels...; layout = (rows, columns), size = (430 * columns, 390 * rows),
+        plot_title = "Objective hypotheses at t=$timestep")
 end
 
-"""
-    make_particle_filter_frame_fn(
-    true_mdp::KAgentPOMDP,
-    true_objective_fn::Function,
-    agent_params::Dict,
-    π_dist::ScoreΠDist;
-    gridsize::Int = 120,
-    n_top::Int = 10,
-    trace_from_current::Bool = true,
-)
-                                   agent_params::Dict, π_dist::ScoreΠDist;
-                                   gridsize::Int=120, n_top::Int=10, predict_from_current::Bool=true)
-
-Create a frame-generation function for use with `particle_filter(...; frame_fn=...)`.
-
-The returned function has signature `(state_data, t, state, config) -> plot_object`.
-
-# Arguments
-- `true_objective_fn::Function`: Ground truth objective function (x, y) -> Real
-- `mdp::KAgentPOMDP`: MDP instance
-- `agent_params::Dict`: Agent configuration dictionary
-- `π_dist::ScoreΠDist`: Cached policy distribution
-- `gridsize::Int`: Resolution of heatmap grid (default: 120)
-- `n_top::Int`: Number of top particles to visualize (default: 10)
-- `trace_from_current::Bool`: If true, traces start from current observed state; 
-  if false, from initial state (default: true)
-
-# Returns
-A closure function ready to pass to `particle_filter(...; frame_fn=...)`
-"""
-function make_particle_filter_frame_fn(
-    true_objective_fn::Function,
-    true_mdp::KAgentPOMDP,
-    agent_params::Dict,
-    π_dist::ScoreΠDist;
-    gridsize::Int = 120,
-    n_top::Int = 10,
-    trace_from_current::Bool = true,
-)
-
-    return function frame_fn(
-        state_data::Matrix{Float64},
-        t::Int,
-        pf_state,
-        config::InferenceConfig,
-    )
-        return plot_particle_filter_frame(
-            state_data,
-            t,
-            pf_state,
-            config,
-            true_objective_fn,
-            true_mdp,
-            agent_params,
-            π_dist;
-            gridsize = gridsize,
-            n_top = n_top,
-            trace_from_current = trace_from_current,
-        )
-    end
+function make_particle_filter_frame_fn(result::AbstractInferenceResult; kwargs...)
+    return timestep -> plot_particle_filter_frame(result, timestep; kwargs...)
 end
 
-"""
-    make_particle_heatmaps_frame_fn(true_objective_fn::Function, mdp::KAgentPOMDP,
-                                    agent_params::Dict, π_dist::ScoreΠDist;
-                                    gridsize::Int=120, n_top::Int=10,
-                                    trace_from_current::Bool=true)
-
-Create a frame-generation function for use with `plot_particle_heatmaps_frame`.
-"""
-function make_particle_heatmaps_frame_fn(
-    true_objective_fn::Function,
-    true_mdp::KAgentPOMDP,
-    π_dist::ScoreΠDist;
-    gridsize::Int = 120,
-    n_top::Int = 10,
-)
-
-    return function frame_fn(
-        state_data::Matrix{Float64},
-        t::Int,
-        pf_state,
-        config::InferenceConfig,
-    )
-
-        _ = (state_data, t)
-        return plot_particle_heatmaps_frame(
-            pf_state,
-            config,
-            true_objective_fn,
-            true_mdp,
-            π_dist;
-            gridsize = gridsize,
-            n_top = n_top
-        )
-    end
+function make_particle_heatmaps_frame_fn(result::AbstractInferenceResult; kwargs...)
+    return timestep -> plot_particle_heatmaps_frame(result, timestep; kwargs...)
 end
 
-"""
-    animate_particle_filter_from_frames(frames::Vector; fps::Int=2)
-
-Convert a sequence of plot frames into an animated GIF.
-
-# Arguments
-- `frames::Vector`: Vector of Plots.jl plot objects (from particle_filter(...; frame_fn=...)[2])
-- `fps::Int`: Frames per second for animation (default: 2)
-
-# Returns
-A Plots.jl Animation object, saveable via `gif(anim, "filename.gif"; fps=fps)`
-"""
-function animate_particle_filter_from_frames(frames::Vector; fps::Int = 2)
-    anim = @animate for p in frames
-        plot(p)
+function animate_particle_filter_from_frames(frames::AbstractVector; fps::Int = 2)
+    animation = Animation()
+    for plot_frame in frames
+        frame(animation, plot_frame)
     end
-    return (anim, fps)
+    return (animation, fps)
+end
+
+function save_particle_filter_animation(frames::AbstractVector, path::AbstractString; fps::Int = 2)
+    animation, actual_fps = animate_particle_filter_from_frames(frames; fps = fps)
+    mkpath(dirname(abspath(path)))
+    return gif(animation, path; fps = actual_fps)
 end

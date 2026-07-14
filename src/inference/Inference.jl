@@ -1,39 +1,34 @@
 module Inference
 
-using LinearAlgebra, Statistics
-using Gen:
-    @gen,
-    @trace,
-    Distribution,
-    UnknownChange,
-    NoChange,
-    categorical,
-    choicemap,
-    get_choice,
-    get_choices,
-    get_retval
-using GenParticleFilters:
-    pf_initialize,
-    pf_rejuvenate!,
-    pf_resample!,
-    pf_update!,
+using Random
+using POMDPs
+
+using ..Planning
+
+include("types.jl")
+include("discrete_filter.jl")
+include("smc_filter.jl")
+
+export ObjectiveHypothesis,
+    AbstractInferenceResult,
+    DiscreteInferenceConfig,
+    DiscreteFilterState,
+    DiscreteFilterResult,
+    ParticleTrace,
+    SMCInferenceConfig,
+    SMCFilterState,
+    SMCFilterResult,
+    initialize_filter,
+    infer_objectives,
+    infer_objectives_smc,
+    initialize_smc,
     effective_sample_size,
-    select,
-    mh
-using GenParticleFilters: get_traces, get_log_weights
-
-using MuKumari: blindstart_KAgentState
-using POMDPs: actions
-
-import ..Priors
-import ..RL
-import ..Utils
-import ..Arrodes: FourierDiscreteCfg, ScoreΠDist, RLConfig, InferenceConfig
-
-include("gen_model.jl")
-export inference_model, extract_component_info, reconstruct_objective_from_trace
-
-include("particle_filter.jl")
-export particle_filter, extract_particle_component_info, best_particle
+    update!,
+    posterior,
+    log_posterior,
+    best_hypothesis,
+    hypothesis_index,
+    hypothesis_mdp,
+    hypothesis_artifact
 
 end

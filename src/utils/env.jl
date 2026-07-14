@@ -1,5 +1,5 @@
 """
-    build_kagent_pomdp(agent_params::Dict, obj::Function; name="fourier_obj")
+    build_kagent_pomdp(agent_params::Dict, obj::Function; name="objective_hypothesis")
 
 Required keys in agent_params:
 - :start::Matrix
@@ -16,7 +16,7 @@ Optional keys (with defaults aligned to init_standard_KAgentPOMDP):
 - :obcs::Vector   # optional obstacles geometry (default empty)
 - :goals::Vector  # optional goals geometry (default empty)
 """
-function build_kagent_pomdp(agent_params::Dict, obj::Function; name::String="fourier_obj")
+function build_kagent_pomdp(agent_params::Dict, obj::Function; name::String="objective_hypothesis")
     @assert haskey(agent_params, :start)
     @assert haskey(agent_params, :dimensions)
     @assert haskey(agent_params, :menv)
@@ -37,14 +37,14 @@ function build_kagent_pomdp(agent_params::Dict, obj::Function; name::String="fou
     goals      = get(agent_params, :goals, Any[])
 
     # Minimal agent landscape placeholder (not used to define obj)
-    objl = AgentObjectiveLandscape(objectives=Any[], f_types=Any[])
+    objl = MuKumari.AgentObjectiveLandscape(objectives=Any[], f_types=Any[])
 
     # Mirror init_standard_KAgentPOMDP world construction
     boxworld = GI.Polygon([[(d[1], d[1]), (d[1], d[2]), (d[2], d[2]), (d[2], d[1]), (d[1], d[1])]])
     # Note: if obcs are empty, world is just the exterior ring.
     world = isempty(obcs) ? boxworld : GI.Polygon([GI.getexterior(boxworld), map(o -> GI.getexterior(o), obcs)...])
 
-    return KAgentPOMDP(name=name, start=start,
+    return MuKumari.KAgentPOMDP(name=name, start=start,
                       dimensions=d, boxworld=boxworld,
                       objl=objl, obcs=obcs, goals=goals,
                       obj=obj,
@@ -68,7 +68,7 @@ function build_shared_menv(; M::Int=3)
         (:lin, x->x[1]^2 + x[2])
     ]
     μs = Symbol[μfs[i][1] for i in 1:M]
-    return MuEnv(M, μs, Dict(μfs))
+    return MuKumari.MuEnv(M, μs, Dict(μfs))
 end
 
 """
@@ -85,7 +85,7 @@ function build_shared_menv(spec::MuEnvSpec)
         (:lin, x->x[1]^2 + x[2])
     ]
     μdict = Dict(μfs)
-    return MuEnv(spec.M, spec.μ_order, μdict)
+    return MuKumari.MuEnv(spec.M, spec.μ_order, μdict)
 end
 
 """
@@ -97,14 +97,18 @@ geometry, noise, discounting, etc., but a different objective function.
 
 The returned dictionary is compatible with `build_kagent_pomdp(agent_params, obj)`.
 """
-function agent_params_from_mdp(mdp::KAgentPOMDP; muenv_spec::Union{Nothing, MuEnvSpec}=nothing)
+function agent_params_from_mdp(mdp; muenv_spec::Union{Nothing, MuEnvSpec}=nothing)
     # Determine menv: use provided spec to build a fresh MuEnv, else fall back to mdp.menv
-    menv_local = isnothing(muenv_spec) ? build_shared_menv(MuEnvSpec()) : build_shared_menv(muenv_spec)
+    menv_local = isnothing(muenv_spec) ? mdp.menv : build_shared_menv(muenv_spec)
 
     return Dict(
         # --- required ---
         :start        => mdp.start,
-        :start_state  => KAgentState(mdp.start, [predict_env(menv_local, mdp.start)], Matrix[]),
+        :start_state  => MuKumari.KAgentState(
+            mdp.start,
+            [MuKumari.predict_env(menv_local, mdp.start)],
+            Matrix[],
+        ),
         :dimensions   => mdp.dimensions,
         :menv         => menv_local,
 
