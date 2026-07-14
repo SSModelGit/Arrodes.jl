@@ -12,6 +12,7 @@ export FourierDiscreteCfg,
     ComponentField,
     RandomFourierField,
     RadialBasisField,
+    ZeroField,
     RLConfig,
     InferenceConfig
 
@@ -166,6 +167,13 @@ Parameters stored in struct to shape the distributions:
     amp_max::Float64 = 10.0
     σ::Float64 = 0.5
 end
+
+@with_kw struct UniformField <: ComponentField
+    constant_min::Float64 = -10.0
+    constant_max::Float64 = 10.0
+end
+
+struct ZeroField <: ComponentField end
 
 @with_kw struct RunPack
     run_id::Int                 # top-level run index in the BSON

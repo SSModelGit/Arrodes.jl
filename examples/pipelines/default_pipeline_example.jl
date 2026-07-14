@@ -87,17 +87,21 @@ observations = onehot_cols_to_aidx(Float64.(A))
 # Setup component priors
 fourier_field = RandomFourierField(amplitude_max = 10.0, freq_max = π)
 rbf_field = RadialBasisField(
-    x_min = 0.0,
+    x_min = 5.0,
     x_max = 10.0,
-    y_min = 0.0,
+    y_min = 5.0,
     y_max = 10.0,
     amp_min = 0.1,
     amp_max = 10.0,
     σ = 0.5,
 )
+zero_field = ZeroField()
 
-component_tuples =
-    [(fourier_field, fourier_params_sampler(fourier_field)), (rbf_field, rbf_params_sampler(rbf_field))]
+component_tuples = [
+    (fourier_field, fourier_params_sampler(fourier_field)),
+    (rbf_field, rbf_params_sampler(rbf_field)),
+    (zero_field, zero_params_sampler(zero_field)),
+]
 
 # Configure inference
 param_switch, component_fields = build_component_param_switch(component_tuples)
@@ -109,7 +113,7 @@ config = InferenceConfig(
     component_tuples = component_tuples,
     component_params_switch = param_switch,
     component_type_sampler = ct_sampler,
-    k_components = 1,
+    k_components = 5,
     rl_config = rl_config,
     agent_params = agent_params,
 )
@@ -123,7 +127,8 @@ config = InferenceConfig(
     mdp_params = [alist, a -> Float64.(Flux.onehot(a, alist)), Float64.(Flux.onehotbatch(alist, alist))],
 )
 
-n_particles = 10
+n_particles = 50
+n_top = 10
 
 # Setup frame creation function for animation
 frame_fn1 = make_particle_filter_frame_fn(
@@ -132,7 +137,7 @@ frame_fn1 = make_particle_filter_frame_fn(
     agent_params,
     π_dist;
     gridsize = 120,
-    n_top = 10,
+    n_top = n_top,
     trace_from_current = false,
 )
 frame_fn2 = make_particle_filter_frame_fn(
@@ -141,17 +146,12 @@ frame_fn2 = make_particle_filter_frame_fn(
     agent_params,
     π_dist;
     gridsize = 120,
-    n_top = 10,
+    n_top = n_top,
     trace_from_current = true,
 )
 
-frame_fn3 = make_particle_heatmaps_frame_fn(
-    true_objective_fn_viz,
-    mdp,
-    π_dist;
-    gridsize = 120,
-    n_top = 10,
-)
+frame_fn3 =
+    make_particle_heatmaps_frame_fn(true_objective_fn_viz, mdp, π_dist; gridsize = 120, n_top = n_top)
 
 # Run particle filter with frame recording
 pf_state, frameset = particle_filter(
@@ -160,6 +160,7 @@ pf_state, frameset = particle_filter(
     π_dist,
     state_data,
     n_particles;
+    ess_thresh = 0.9,
     frame_fns = [frame_fn1, frame_fn2, frame_fn3],
 )
 
@@ -170,9 +171,9 @@ for (i, frames) in enumerate(frameset)
     pth = joinpath(PLOTS_DIR, anim_names[i])
     mkpath(pth)
     for (j, frame) in enumerate(frames)
-        savefig(frame, joinpath(pth, anim_names[i]*"_$(j).png"))
+        savefig(frame, joinpath(pth, anim_names[i] * "_$(j).png"))
     end
-    gif(anim[1], joinpath(pth, anim_names[i]*".gif"); fps = anim[2])
+    gif(anim[1], joinpath(pth, anim_names[i] * ".gif"); fps = anim[2])
     println("Animation saved to: $(pth)")
 end
 
@@ -189,7 +190,10 @@ end
 # Extract and display results
 best_idx, best_weight, comp_idxs, comp_params, obj_fn = best_particle(pf_state, config, component_fields)
 
-println("Inferred component: $(["Fourier", "RBF"][comp_idxs[1]])")
+println("Inferred component: $(["Fourier", "RBF", "Zero"][comp_idxs[1]])")
+for (i, idx) in enumerate(comp_idxs)
+    println("Inferred component $i: $(["Fourier", "RBF", "Zero"][idx])")
+end
 println("Best particle weight: $best_weight")
 
 # Visualize final particle filter state
@@ -203,7 +207,7 @@ p = Visualizations.plot_particle_filter_explanation(
     π_dist,
     mdp;
     gridsize = 150,
-    n_top = 10,
+    n_top = n_top,
 )
 
 display(p)

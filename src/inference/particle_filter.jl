@@ -27,7 +27,7 @@ function particle_filter(
     π_dist::ScoreΠDist,
     state_data::Matrix{Float64},
     n_particles::Int = 50;
-    ess_thresh::Float64 = 0.5,
+    ess_thresh::Float64 = 0.7,
     resample_alg::Symbol = :residual,
     frame_fns = nothing,
 )

@@ -14,7 +14,8 @@ import ..Arrodes:
     RBFDiscreteCfg,
     ComponentField,
     RandomFourierField,
-    RadialBasisField
+    RadialBasisField,
+    ZeroField
 import ..Utils: randcat
 
 include("generics.jl")
@@ -24,10 +25,13 @@ include("fields.jl")
 export make_pomdp_objective_from_field, objective_grid_from_field, objective_grid_from_mdp
 
 include("fourier.jl")
-export RandomFourierField, fourier_params_sampler
+export fourier_params_sampler
 
 include("rbf.jl")
-export RadialBasisField, rbf_params_sampler
+export rbf_params_sampler
+
+include("zero.jl")
+export zero_params_sampler
 
 """
     build_component_param_switch(component_tuples::Vector)

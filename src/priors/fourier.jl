@@ -1,9 +1,3 @@
-
-
-################################################################################
-# NEW COMPONENTFIELD-BASED IMPLEMENTATION
-################################################################################
-
 """
     component_type(::RandomFourierField)
 
@@ -21,10 +15,16 @@ Return a Gen-wrapped closure that samples Fourier parameters from the given fiel
 function fourier_params_sampler(field::RandomFourierField)
     Gen.@gen function sample_params()
         amplitude ~ Gen.uniform(0, field.amplitude_max)
-        frequency ~ Gen.uniform(0, field.freq_max)
+        frequency_x ~ Gen.uniform(0, field.freq_max)
+        frequency_y ~ Gen.uniform(0, field.freq_max)
         phase ~ Gen.uniform(0, 2π)
 
-        return Dict("amplitude" => amplitude, "frequency" => frequency, "phase" => phase)
+        return Dict(
+            "amplitude" => amplitude,
+            "frequency_x" => frequency_x,
+            "frequency_y" => frequency_y,
+            "phase" => phase,
+        )
     end
     return sample_params
 end
@@ -47,12 +47,13 @@ continuous parameters sampled via Gen.jl instead of discretized bins.
 """
 function make_component(::RandomFourierField, params::Dict)
     A = params["amplitude"]
-    f = params["frequency"]
+    fx = params["frequency_x"]
+    fy = params["frequency_y"]
     φ = params["phase"]
 
-    # Field formula: f(x,y) = A * cos(f*x + f*y + ϕ)
+    # Field formula: f(x,y) = A * cos(fx*x + fy*y + ϕ)
     function fourier_field(x::Real, y::Real)::Float64
-        return A * cos(f * x + f * y + φ)
+        return A * cos(fx * x + fy * y + φ)
     end
 
     return fourier_field
@@ -81,7 +82,7 @@ function describe_component_params(::RandomFourierField)
         Distribution: uniform(0, 2π) [continuous, sampled via Gen.jl]
         Impact: Controls phase shift of the cosine
 
-    Field Formula: f(x, y) = A * cos(f * x + f * y + φ)
+    Field Formula: f(x, y) = A * cos(fx * x + fy * y + φ)
 
     Note: This is the continuous version replacing the old discrete binned approach.
     """
