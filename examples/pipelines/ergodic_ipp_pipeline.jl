@@ -109,8 +109,24 @@ function wrap_objective(base, objective; resolution = (8, 8))
         for y in range(lo, hi; length = resolution[2])]
     prior_sites = [[8.0 8.0], [8.0 92.0], [92.0 8.0], [92.0 92.0], [50.0 50.0]]
     gp = initial_gp(base, prior_sites)
-    proxy = state -> (objective_proxy(objective, gp, state), false)
-    return ObjectiveVolcanoMDP(base, objective, (lo, hi), proxy, sites, prior_sites)
+    plotted_field = Ref{Function}(state -> objective_proxy(objective, gp, state))
+    mdp = ObjectiveVolcanoMDP(base, objective, (lo, hi),
+        state -> (plotted_field[](state), false), sites, prior_sites)
+
+    # Plot the same one-step information reward that VulcanJ evaluates inside
+    # InfoMCTS and when constructing an ergodic target density. The ergodic case
+    # uses VulcanJ's normalization because that normalized density is the actual
+    # spatial objective optimized by `one_shot_ergodic_planner`.
+    rewards = [VulcanJ.expected_single_observation_reward(mdp, gp, site, 3)
+        for site in sites]
+    field_values = objective.id === :ergodic_mutual_information ?
+        VulcanJ.normalize_density(rewards) : rewards
+    plotted_field[] = function (state)
+        location = vec(VulcanJ.extract_location(state))
+        _, index = findmin([sum(abs2, vec(site) .- location) for site in sites])
+        return field_values[index]
+    end
+    return mdp
 end
 
 # Delegate simulation to the shared MuKumari world. Every hypothesis therefore has
@@ -226,18 +242,48 @@ println("Resampling timesteps: ", result.state.resampling_times)
 
 output_dir = joinpath(@__DIR__, "res", "ergodic_ipp")
 mkpath(output_dir)
+
+# Elevation is the latent environment, not the agent's objective. Preserve it as
+# a separately and accurately labelled diagnostic.
+environment_axis = range(first(true_mdp.dimensions), last(true_mdp.dimensions); length = 80)
+environment_plot = heatmap(environment_axis, environment_axis,
+    [elevation(shared_world, [x y]) for y in environment_axis, x in environment_axis];
+    aspect_ratio = :equal, color = :viridis, title = "Ground-truth volcanic elevation",
+    xlabel = "x", ylabel = "y")
+savefig(environment_plot, joinpath(output_dir, "volcano_environment.png"))
+
 final_plot = plot_particle_filter_explanation(result;
-    true_objective_fn = (x, y) -> elevation(shared_world, [x y]),
     true_mdp = true_mdp, n_top = 5, gridsize = 30,
     rollout_horizon = VOLCANO_HORIZON)
 savefig(final_plot, joinpath(output_dir, "final_explanation.png"))
 
-# Full animations are opt-in because each InfoMCTS frame performs real tree search.
-if get(ENV, "ARRODES_ANIMATE", "false") == "true"
-    frame_fn = make_particle_filter_frame_fn(result;
-        true_objective_fn = (x, y) -> elevation(shared_world, [x y]),
-        true_mdp = true_mdp, n_top = 5, gridsize = 30,
-        rollout_horizon = VOLCANO_HORIZON)
-    frames = [frame_fn(t) for t in axes(result.posterior_history, 2)]
-    save_particle_filter_animation(frames, joinpath(output_dir, "mixed_planner_filter.gif"))
-end
+# Reproduce the complete diagnostic animation set from the default pipeline.
+# These are computationally heavier here because each displayed InfoMCTS path is
+# produced by a real VulcanJ tree search.
+animation_options = (
+    true_mdp = true_mdp,
+    n_top = length(hypotheses),
+    gridsize = 30,
+)
+
+start_frame = make_particle_filter_frame_fn(result;
+    animation_options...,
+    trace_from_current = false,
+    rollout_horizon = VOLCANO_HORIZON)
+current_frame = make_particle_filter_frame_fn(result;
+    animation_options...,
+    trace_from_current = true,
+    rollout_horizon = VOLCANO_HORIZON)
+heatmaps_frame = make_particle_heatmaps_frame_fn(result; animation_options...)
+
+timesteps = axes(result.posterior_history, 2)
+start_frames = [start_frame(t) for t in timesteps]
+current_frames = [current_frame(t) for t in timesteps]
+heatmap_frames = [heatmaps_frame(t) for t in timesteps]
+
+save_particle_filter_animation(
+    start_frames, joinpath(output_dir, "plans_from_start.gif"))
+save_particle_filter_animation(
+    current_frames, joinpath(output_dir, "plans_from_current.gif"))
+save_particle_filter_animation(
+    heatmap_frames, joinpath(output_dir, "objective_heatmaps.gif"))
