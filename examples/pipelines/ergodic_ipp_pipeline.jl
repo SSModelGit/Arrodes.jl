@@ -16,9 +16,21 @@ using VulcanJ
 const PEAK_THRESHOLD = 7.0
 const VOLCANO_HORIZON = 8
 
-Base.@kwdef struct VolcanoObjective
+# Example-local Ayton query Q = <f_Q, J_Q, Delta_Q>. The volcano pipeline only
+# needs the query function and objective class, so no general query framework is
+# introduced into Arrodes itself.
+Base.@kwdef struct VolcanoQuery
     id::Symbol
+    query_function::Function
+    kind::Symbol
+    posterior_specialization = :none
+    prior_mass::Union{Nothing,Float64} = nothing
+    sufficient_reward::Union{Nothing,Float64} = nothing
     description::String
+end
+
+Base.@kwdef struct VolcanoObjective{Q<:VolcanoQuery}
+    query::Q
     threshold::Float64 = PEAK_THRESHOLD
 end
 
@@ -97,8 +109,8 @@ function objective_proxy(objective, gp, state)
     location = VulcanJ.extract_location(state)
     _, variance = predict_f(gp, location')
     σ² = max(first(vec(variance)), eps())
-    objective.id === :minimize_uncertainty_trace && return -σ²
-    objective.id in (:maximize_mutual_information, :ergodic_mutual_information) && return log1p(σ²)
+    objective.query.id === :minimize_uncertainty_trace && return -σ²
+    objective.query.id in (:maximize_mutual_information, :ergodic_mutual_information) && return log1p(σ²)
     return exceedance_probability(gp, state, objective.threshold)
 end
 
@@ -119,7 +131,7 @@ function wrap_objective(base, objective; resolution = (8, 8))
     # spatial objective optimized by `one_shot_ergodic_planner`.
     rewards = [VulcanJ.expected_single_observation_reward(mdp, gp, site, 3)
         for site in sites]
-    field_values = objective.id === :ergodic_mutual_information ?
+    field_values = objective.query.id === :ergodic_mutual_information ?
         VulcanJ.normalize_density(rewards) : rewards
     plotted_field[] = function (state)
         location = vec(VulcanJ.extract_location(state))
@@ -155,11 +167,11 @@ const ANY_PEAK_CACHE = IdDict{GPE,Float64}()
 
 function VulcanJ.posterior_phenomenon_prob(mdp::ObjectiveVolcanoMDP, gp::GPE, state)
     objective = mdp.objective
-    if objective.id === :minimize_uncertainty_trace
+    if objective.query.id === :minimize_uncertainty_trace
         _, variance = predict_f(gp, VulcanJ.extract_location(state)')
         σ² = max(first(vec(variance)), eps())
         return clamp(σ² / (1 + σ²), eps(), 1 - eps())
-    elseif objective.id === :maximize_any_peak_confidence
+    elseif objective.query.id === :information_any_peak_existence
         return get!(ANY_PEAK_CACHE, gp) do
             probabilities = [exceedance_probability(gp, site, objective.threshold) for site in mdp.sites]
             clamp(1 - prod(1 - probability for probability in probabilities), eps(), 1 - eps())
@@ -169,16 +181,34 @@ function VulcanJ.posterior_phenomenon_prob(mdp::ObjectiveVolcanoMDP, gp::GPE, st
 end
 
 objectives = [
-    VolcanoObjective(id = :minimize_uncertainty_trace,
-        description = "Minimize trace of the GP predictive covariance"),
-    VolcanoObjective(id = :maximize_mutual_information,
-        description = "Maximize cumulative mutual-information gain"),
-    VolcanoObjective(id = :ergodic_mutual_information,
-        description = "Become ergodic with respect to the MI field"),
-    VolcanoObjective(id = :maximize_peak_count,
-        description = "Resolve and maximize the expected count of peaks", threshold = PEAK_THRESHOLD),
-    VolcanoObjective(id = :maximize_any_peak_confidence,
-        description = "Maximize confidence that at least one peak exists", threshold = PEAK_THRESHOLD),
+    VolcanoObjective(query = VolcanoQuery(
+        id = :minimize_uncertainty_trace,
+        query_function = (_path, gp_values) -> gp_values,
+        kind = :information,
+        description = "Reduce uncertainty in the GP field (covariance-trace criterion)")),
+    VolcanoObjective(query = VolcanoQuery(
+        id = :maximize_mutual_information,
+        query_function = (_path, elevation_field) -> elevation_field,
+        kind = :information,
+        description = "Maximize mutual information about the elevation field")),
+    VolcanoObjective(query = VolcanoQuery(
+        id = :ergodic_mutual_information,
+        query_function = (_path, elevation_field) -> elevation_field,
+        kind = :information,
+        description = "Sample ergodically with respect to elevation-field information")),
+    VolcanoObjective(query = VolcanoQuery(
+        id = :maximize_peak_count,
+        query_function = (_path, elevation_field) -> count(>(PEAK_THRESHOLD), elevation_field),
+        kind = :value,
+        description = "Maximize the expected count of above-threshold peaks"),
+        threshold = PEAK_THRESHOLD),
+    VolcanoObjective(query = VolcanoQuery(
+        id = :information_any_peak_existence,
+        query_function = (_path, elevation_field) -> any(>(PEAK_THRESHOLD), elevation_field),
+        kind = :information,
+        posterior_specialization = :none,
+        description = "Maximize mutual information about the Boolean event that any above-threshold peak exists"),
+        threshold = PEAK_THRESHOLD),
 ]
 
 info_behavior() = BehaviorModel(
@@ -197,11 +227,11 @@ ergodic_behavior() = BehaviorModel(
 )
 
 hypotheses = [ObjectiveHypothesis(
-    id = objective.id,
+    id = objective.query.id,
     objective = objective,
-    behavior = objective.id === :ergodic_mutual_information ? ergodic_behavior() : info_behavior(),
+    behavior = objective.query.id === :ergodic_mutual_information ? ergodic_behavior() : info_behavior(),
     prior_probability = 0.2,
-    metadata = (; objective.description, threshold = objective.threshold),
+    metadata = (; description = objective.query.description, threshold = objective.threshold),
 ) for objective in objectives]
 
 shared_world = build_volcano_world()

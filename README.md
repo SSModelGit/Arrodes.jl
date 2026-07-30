@@ -97,5 +97,7 @@ See `examples/pipelines/default_pipeline_example.jl` for a MuKumari example and
 `examples/pipelines/vulcanj_ergodic_adapter.jl` for an open-loop VulcanJ integration.
 `examples/pipelines/ergodic_ipp_pipeline.jl` is the complete volcano-search example:
 five GP mission objectives, mixed VulcanJ InfoMCTS/ergodic planners, a hidden true
-objective, SMC inference, transition-noise scoring, and optional animation.
+objective, SMC inference, transition-noise scoring, and diagnostic animations.
+`examples/pipelines/ayton_query_inference_pipeline.jl` is the compact reference for
+writing and inferring over every class of Ayton query.
 The planner and filtering contracts are described in `docs/architecture.md`.
