@@ -105,7 +105,7 @@ start_frames = [start_frame(t) for t in timesteps]
 current_frames = [current_frame(t) for t in timesteps]
 heatmap_frames = [heatmaps_frame(t) for t in timesteps]
 
-output_dir = joinpath(@__DIR__, "res")
+output_dir = joinpath(@__DIR__, "res", "default_pipeline")
 mkpath(output_dir)
 save_particle_filter_animation(start_frames, joinpath(output_dir, "plans_from_start.gif"))
 save_particle_filter_animation(current_frames, joinpath(output_dir, "plans_from_current.gif"))
