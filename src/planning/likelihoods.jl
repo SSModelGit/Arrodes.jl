@@ -1,4 +1,4 @@
-Base.@kwdef struct BoltzmannScoreLikelihood <: AbstractActionLikelihood
+@with_kw struct BoltzmannScoreLikelihood <: AbstractActionLikelihood
     temperature::Float64 = 1.0
 end
 
@@ -16,7 +16,7 @@ function action_distribution(likelihood::BoltzmannScoreLikelihood, planner::Abst
     return _validate_distribution(weights, length(action_list))
 end
 
-Base.@kwdef struct EpsilonGreedyLikelihood <: AbstractActionLikelihood
+@with_kw struct EpsilonGreedyLikelihood <: AbstractActionLikelihood
     epsilon::Float64 = 0.05
 end
 
@@ -33,7 +33,7 @@ function action_distribution(likelihood::EpsilonGreedyLikelihood, planner::Abstr
     return probabilities
 end
 
-Base.@kwdef struct PlanTrackingLikelihood <: AbstractActionLikelihood
+@with_kw struct PlanTrackingLikelihood <: AbstractActionLikelihood
     epsilon::Float64 = 0.05
 end
 
@@ -45,8 +45,8 @@ function action_distribution(likelihood::PlanTrackingLikelihood, planner::Abstra
 end
 
 """User-supplied action distribution callback."""
-struct CallbackLikelihood{F} <: AbstractActionLikelihood
-    distribution_fn::F
+struct CallbackLikelihood <: AbstractActionLikelihood
+    distribution_fn::Function
 end
 
 function action_distribution(likelihood::CallbackLikelihood, planner::AbstractPlanner,

@@ -2,4 +2,6 @@
 .vscode/
 log/
 *.bson
-literature/
+literature/*
+bigdata/
+docs/

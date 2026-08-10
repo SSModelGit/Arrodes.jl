@@ -6,11 +6,11 @@ import GeoInterface as GI
 
 # These are named, domain-informed objectives. No objective function is sampled.
 menv = build_shared_menv(MuEnvSpec())
-agent_params = Dict(
-    :start => [4.0 4.0],
-    :dimensions => (0.0, 10.0),
-    :menv => menv,
-    :obcs => [
+agent_config = KAgentMDPConfig(
+    start = [4.0 4.0],
+    dimensions = (0.0, 10.0),
+    menv = menv,
+    obstacles = [
         GI.Polygon([[(2.0, 2.0), (2.0, 3.0), (3.0, 3.0), (3.0, 2.0), (2.0, 2.0)]]),
         # MuKumari's observation encoder requests the two nearest obstacles.
         GI.Polygon([[(7.0, 2.0), (7.0, 3.0), (8.0, 3.0), (8.0, 2.0), (7.0, 2.0)]]),
@@ -47,32 +47,32 @@ hypotheses = [
     ),
 ]
 
-config = DiscreteInferenceConfig(
+problem = ObjectiveInferenceProblem(
     hypotheses = hypotheses,
     mdp_builder = (objective, hypothesis) ->
-        build_kagent_pomdp(agent_params, objective; name = String(hypothesis.id)),
+        build_kagent_pomdp(agent_config, objective; name = String(hypothesis.id)),
     state_adapter = (mdp, observation, timestep) ->
         blindstart_KAgentState(mdp, reshape(Float64.(observation[1:2]), 1, 2)),
 )
 
-observed_states = [4.0 5.0 6.0 7.0; 4.0 5.0 6.0 7.0]
+observed_states = [[4.0, 4.0], [5.0, 5.0], [6.0, 6.0], [7.0, 7.0]]
 observed_actions = [:ne, :ne, :ne, :ne]
 
 # The scalable default is trace-preserving SMC. Exact enumeration remains useful
 # as a small-hypothesis reference calculation via `infer_objectives`.
-smc_config = SMCInferenceConfig(
-    model = config,
+smc_config = SMCConfig(
     n_particles = 256,
     ess_threshold = 0.7,
-    rejuvenation_steps = 2,
+    invariant_move = ObjectiveReplayMove(),
+    invariant_steps = 2,
 )
-result = infer_objectives_smc(smc_config, observed_states, observed_actions)
+result = infer_objectives_smc(problem, observed_states, observed_actions, smc_config)
 winner = best_hypothesis(result)
 
 println("Posterior: ", Dict(h.id => p for (h, p) in zip(hypotheses, posterior(result))))
 println("Best explanation: ", winner.hypothesis.id, " (", winner.probability, ")")
-println("ESS history: ", result.ess_history)
-println("Resampling timesteps: ", result.state.resampling_times)
+println("ESS history: ", getfield.(result.state.diagnostics, :ess))
+println("Resampling stages: ", [d.stage for d in result.state.diagnostics if d.resampled])
 
 # Restore all three diagnostic animation families:
 #   1. each hypothesis planned from the shared initial state;
@@ -82,25 +82,25 @@ true_objective_fn = (x, y) -> -hypot(x - 9.0, y - 9.0)
 start_frame = make_particle_filter_frame_fn(
     result;
     true_objective_fn = true_objective_fn,
-    true_mdp = hypothesis_mdp(result.state, :reach_goal),
+    true_mdp = hypothesis_mdp(problem, :reach_goal),
     trace_from_current = false,
     n_top = length(hypotheses),
 )
 current_frame = make_particle_filter_frame_fn(
     result;
     true_objective_fn = true_objective_fn,
-    true_mdp = hypothesis_mdp(result.state, :reach_goal),
+    true_mdp = hypothesis_mdp(problem, :reach_goal),
     trace_from_current = true,
     n_top = length(hypotheses),
 )
 heatmaps_frame = make_particle_heatmaps_frame_fn(
     result;
     true_objective_fn = true_objective_fn,
-    true_mdp = hypothesis_mdp(result.state, :reach_goal),
+    true_mdp = hypothesis_mdp(problem, :reach_goal),
     n_top = length(hypotheses),
 )
 
-timesteps = axes(result.posterior_history, 2)
+timesteps = eachindex(observed_actions)
 start_frames = [start_frame(t) for t in timesteps]
 current_frames = [current_frame(t) for t in timesteps]
 heatmap_frames = [heatmaps_frame(t) for t in timesteps]
@@ -114,7 +114,7 @@ save_particle_filter_animation(heatmap_frames, joinpath(output_dir, "objective_h
 final_plot = plot_particle_filter_explanation(
     result;
     true_objective_fn = true_objective_fn,
-    true_mdp = hypothesis_mdp(result.state, :reach_goal),
+    true_mdp = hypothesis_mdp(problem, :reach_goal),
     n_top = length(hypotheses),
 )
 savefig(final_plot, joinpath(output_dir, "final_filter_explanation.png"))

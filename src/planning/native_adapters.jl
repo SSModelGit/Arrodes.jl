@@ -1,6 +1,6 @@
-"""Adapter for any solver implementing `POMDPs.solve` and `POMDPs.action`."""
-struct POMDPSolverPlanner{F} <: AbstractPlanner
-    solver_factory::F
+"""Thin adapter for any native solver implementing `POMDPs.solve` and `POMDPs.action`."""
+struct POMDPSolverPlanner <: AbstractPlanner
+    solver_factory::Function
 end
 
 POMDPSolverPlanner(solver::POMDPs.Solver) = POMDPSolverPlanner((_mdp, _context) -> deepcopy(solver))
@@ -14,11 +14,11 @@ planned_action(::POMDPSolverPlanner, artifact::PolicyArtifact, mdp, state,
                context::PlanningContext) = POMDPs.action(artifact.policy, state)
 
 """General adapter for user-provided preparation and decision functions."""
-Base.@kwdef struct CallbackPlanner{F,A,S,R} <: AbstractPlanner
-    prepare_fn::F
-    action_fn::A = nothing
-    scores_fn::S = nothing
-    rollout_fn::R = nothing
+@with_kw_noshow struct CallbackPlanner <: AbstractPlanner
+    prepare_fn::Function
+    action_fn::Union{Nothing,Function} = nothing
+    scores_fn::Union{Nothing,Function} = nothing
+    rollout_fn::Union{Nothing,Function} = nothing
     scope::Symbol = :hypothesis
 end
 
@@ -46,7 +46,7 @@ function rollout(planner::CallbackPlanner, artifact::CallbackArtifact, mdp, init
 end
 
 """Built-in MCTS/DPW planner for MuKumari belief-state POMDPs."""
-Base.@kwdef struct MCTSPlanner <: AbstractPlanner
+@with_kw struct MCTSPlanner <: AbstractPlanner
     variant::Symbol = :dpw
     n_iterations::Int = 1000
     depth::Int = 20
@@ -54,20 +54,18 @@ Base.@kwdef struct MCTSPlanner <: AbstractPlanner
 end
 
 function prepare(planner::MCTSPlanner, mdp, context::PlanningContext)
-    base_solver = if planner.variant === :dpw
-        MCTS.DPWSolver(
+    base_solver = @match planner.variant begin
+        :dpw => MCTS.DPWSolver(
             n_iterations = planner.n_iterations,
             depth = planner.depth,
             exploration_constant = planner.exploration_constant,
         )
-    elseif planner.variant === :vanilla
-        MCTS.MCTSSolver(
+        :vanilla => MCTS.MCTSSolver(
             n_iterations = planner.n_iterations,
             depth = planner.depth,
             exploration_constant = planner.exploration_constant,
         )
-    else
-        throw(ArgumentError("MCTS variant must be :dpw or :vanilla"))
+        _ => error("unknown MCTS variant: $(planner.variant)")
     end
     updater = MuKumari.KAgentBeliefUpdater(
         state_dims = length(mdp.start),
@@ -81,13 +79,13 @@ planned_action(::MCTSPlanner, artifact::PolicyArtifact, mdp, state,
                context::PlanningContext) = POMDPs.action(artifact.policy, state)
 
 """VulcanJ risk-bounded information-MCTS planner."""
-struct VulcanMCTSPlanner{F} <: AbstractPlanner
-    solver_factory::F
+struct VulcanMCTSPlanner <: AbstractPlanner
+    solver_factory::Function
     quiet::Bool
 end
 
 VulcanMCTSPlanner(factory; quiet::Bool = true) =
-    VulcanMCTSPlanner{typeof(factory)}(factory, quiet)
+    VulcanMCTSPlanner(factory, quiet)
 VulcanMCTSPlanner(solver::VulcanJ.RiskBoundedInfoMCTS; quiet::Bool = true) =
     VulcanMCTSPlanner((_mdp, _context) -> deepcopy(solver); quiet = quiet)
 
@@ -107,10 +105,10 @@ function planned_action(planner::VulcanMCTSPlanner, artifact::PolicyArtifact, md
 end
 
 """VulcanJ one-shot ergodic path planner."""
-struct VulcanErgodicPlanner{G,K} <: AbstractPlanner
-    gp_factory::G
+struct VulcanErgodicPlanner <: AbstractPlanner
+    gp_factory::Function
     n_steps::Int
-    kwargs::K
+    kwargs::NamedTuple
 end
 
 function VulcanErgodicPlanner(gp_factory; n_steps::Integer, kwargs...)
@@ -120,14 +118,8 @@ end
 
 cache_scope(::VulcanErgodicPlanner) = :initial_state
 
-function _make_vulcan_gp(factory, mdp, initial_state, context)
-    applicable(factory, mdp, initial_state, context) &&
-        return factory(mdp, initial_state, context)
-    applicable(factory, mdp, initial_state) && return factory(mdp, initial_state)
-    applicable(factory, mdp) && return factory(mdp)
-    throw(ArgumentError(
-        "Vulcan GP factory must accept (mdp, initial_state, context), (mdp, initial_state), or (mdp)"))
-end
+_make_vulcan_gp(factory, mdp, initial_state, context) =
+    factory(mdp, initial_state, context)
 
 function prepare(planner::VulcanErgodicPlanner, mdp, context::PlanningContext)
     isempty(context.states) && throw(ArgumentError(
@@ -157,8 +149,8 @@ rollout(::VulcanErgodicPlanner, artifact::OpenLoopArtifact, mdp, initial_state,
     (states = artifact.states, actions = artifact.actions[1:min(horizon, length(artifact.actions))])
 
 """Adapter for planners which construct a complete action sequence."""
-Base.@kwdef struct OpenLoopPlanner{F} <: AbstractPlanner
-    prepare_fn::F
+@with_kw_noshow struct OpenLoopPlanner <: AbstractPlanner
+    prepare_fn::Function
     scope::Symbol = :initial_state
 end
 
@@ -185,7 +177,7 @@ rollout(::OpenLoopPlanner, artifact::OpenLoopArtifact, mdp, initial_state, horiz
     (states = artifact.states, actions = artifact.actions[1:min(horizon, length(artifact.actions))])
 
 """Crux Soft-Q planner retained as an explicit built-in planner, not an inference default."""
-Base.@kwdef struct SoftQPlanner <: AbstractPlanner
+@with_kw struct SoftQPlanner <: AbstractPlanner
     n_iterations::Int = 200
     epochs::Int = 2
     batch_size::Int = 512

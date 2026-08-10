@@ -1,15 +1,16 @@
 module ObjectiveFields
 
 using Random
+using Parameters: @with_kw
 
 abstract type ComponentField end
 
-Base.@kwdef struct RandomFourierField <: ComponentField
+@with_kw struct RandomFourierField <: ComponentField
     amplitude_max::Float64 = 10.0
     freq_max::Float64 = pi
 end
 
-Base.@kwdef struct RadialBasisField <: ComponentField
+@with_kw struct RadialBasisField <: ComponentField
     x_min::Float64 = 0.0
     x_max::Float64 = 10.0
     y_min::Float64 = 0.0

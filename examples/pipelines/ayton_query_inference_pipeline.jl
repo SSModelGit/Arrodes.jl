@@ -1,4 +1,5 @@
 using Arrodes
+using Parameters: @with_kw
 using POMDPs
 
 # This file is intentionally self-contained. It is an example of spelling out an
@@ -9,7 +10,7 @@ using POMDPs
 #   J_Q       is a value, probability, or information objective, optionally
 #             specialized over posterior values or prior mission outcomes; and
 #   Delta_Q   is an optional sufficient reward at which sampling may stop.
-Base.@kwdef struct ExampleQuery{F}
+@with_kw struct ExampleQuery{F}
     id::Symbol
     f_Q::F
     basic_objective::Symbol
@@ -156,7 +157,7 @@ hypotheses = [ObjectiveHypothesis(
     prior_probability = 1 / length(queries),
     metadata = (; query.description),
 ) for query in queries]
-model = DiscreteInferenceConfig(
+problem = ObjectiveInferenceProblem(
     hypotheses = hypotheses,
     mdp_builder = (query, hypothesis) -> QueryExampleMDP(query),
 )
@@ -164,9 +165,10 @@ model = DiscreteInferenceConfig(
 true_query = :information
 states = collect(0:7)
 actions = fill(action_for(queries[3]), length(states))
-result = infer_objectives_smc(SMCInferenceConfig(
-    model = model, n_particles = 240, ess_threshold = 0.7, rejuvenation_steps = 3,
-), states, actions)
+result = infer_objectives_smc(problem, states, actions, SMCConfig(
+    n_particles = 240, ess_threshold = 0.7,
+    invariant_move = ObjectiveReplayMove(), invariant_steps = 3,
+))
 
 println("True query: ", true_query)
 println("Posterior: ", Dict(h.id => p for (h, p) in zip(hypotheses, posterior(result))))

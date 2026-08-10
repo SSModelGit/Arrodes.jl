@@ -53,12 +53,7 @@ function action_distribution(likelihood::AbstractActionLikelihood, planner::Abst
         (likelihood, planner, artifact, mdp, state, action_list, context)))
 end
 
-function _call_factory(factory, mdp, context)
-    applicable(factory, mdp, context) && return factory(mdp, context)
-    applicable(factory, mdp) && return factory(mdp)
-    applicable(factory) && return factory()
-    throw(ArgumentError("planner factory must accept (mdp, context), (mdp), or no arguments"))
-end
+_call_factory(factory, mdp, context) = factory(mdp, context)
 
 function _validate_distribution(probabilities, n_actions::Integer)
     p = Float64.(vec(probabilities))

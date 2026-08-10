@@ -4,6 +4,7 @@ using LinearAlgebra
 using MuKumari
 using Plots
 using POMDPs
+using Parameters: @with_kw
 using Random
 using SpecialFunctions: erf
 using VulcanJ
@@ -19,7 +20,7 @@ const VOLCANO_HORIZON = 8
 # Example-local Ayton query Q = <f_Q, J_Q, Delta_Q>. The volcano pipeline only
 # needs the query function and objective class, so no general query framework is
 # introduced into Arrodes itself.
-Base.@kwdef struct VolcanoQuery
+@with_kw struct VolcanoQuery
     id::Symbol
     query_function::Function
     kind::Symbol
@@ -29,7 +30,7 @@ Base.@kwdef struct VolcanoQuery
     description::String
 end
 
-Base.@kwdef struct VolcanoObjective{Q<:VolcanoQuery}
+@with_kw struct VolcanoObjective{Q<:VolcanoQuery}
     query::Q
     threshold::Float64 = PEAK_THRESHOLD
 end
@@ -219,7 +220,7 @@ info_behavior() = BehaviorModel(
 )
 
 ergodic_behavior() = BehaviorModel(
-    VulcanErgodicPlanner((mdp, state) -> VulcanJ.get_initial_gp(mdp, state);
+    VulcanErgodicPlanner((mdp, state, context) -> VulcanJ.get_initial_gp(mdp, state);
         n_steps = VOLCANO_HORIZON, optimizer_iters = 45, max_speed = 12.0,
         observe_fn = (mdp, state) -> elevation(mdp.base, state)),
     MovementNoiseLikelihood(n_transition_samples = 32, bandwidth = 12.0,
@@ -235,7 +236,7 @@ hypotheses = [ObjectiveHypothesis(
 ) for objective in objectives]
 
 shared_world = build_volcano_world()
-model = DiscreteInferenceConfig(
+problem = ObjectiveInferenceProblem(
     hypotheses = hypotheses,
     mdp_builder = (objective, hypothesis) -> wrap_objective(shared_world, objective),
     state_adapter = (mdp, observation, timestep) -> observation isa KAgentState ? observation :
@@ -245,30 +246,30 @@ model = DiscreteInferenceConfig(
 
 # Generate the demonstration with objective 3 as the hidden truth.
 true_id = :ergodic_mutual_information
-true_hypothesis = hypotheses[hypothesis_index(model, true_id)]
-true_mdp = model.mdp_builder(true_hypothesis.objective, true_hypothesis)
+true_hypothesis = hypotheses[hypothesis_index(problem, true_id)]
+true_mdp = problem.mdp_builder(true_hypothesis.objective, true_hypothesis)
 initial_state = rand(MersenneTwister(31), POMDPs.initialstate(true_mdp))
 true_context = PlanningContext(hypothesis_id = true_id, states = Any[initial_state],
     horizon = VOLCANO_HORIZON,
-    rng = MersenneTwister(hash((model.seed, true_id, 1), UInt(0))),
+    rng = MersenneTwister(hash((problem.seed, true_id, 1), UInt(0))),
     metadata = true_hypothesis.metadata)
 true_artifact = prepare(true_hypothesis.behavior.planner, true_mdp, true_context)
 demonstration = rollout(true_hypothesis.behavior.planner, true_artifact, true_mdp,
     initial_state, VOLCANO_HORIZON, true_context)
 observed_actions = demonstration.actions
-observed_states = hcat([vec(VulcanJ.extract_location(state))
-    for state in demonstration.states[1:length(observed_actions)]]...)
+observed_states = [vec(VulcanJ.extract_location(state))
+    for state in demonstration.states[1:length(observed_actions)]]
 
-smc = SMCInferenceConfig(model = model, n_particles = 240, ess_threshold = 0.65,
-    rejuvenation_steps = 3)
-result = infer_objectives_smc(smc, observed_states, observed_actions)
+smc = SMCConfig(n_particles = 240, ess_threshold = 0.65,
+    invariant_move = ObjectiveReplayMove(), invariant_steps = 3)
+result = infer_objectives_smc(problem, observed_states, observed_actions, smc)
 
 println("True objective: ", true_id)
 println("Posterior: ", Dict(h.id => probability
     for (h, probability) in zip(hypotheses, posterior(result))))
 println("Best explanation: ", best_hypothesis(result).hypothesis.id)
-println("ESS history: ", result.ess_history)
-println("Resampling timesteps: ", result.state.resampling_times)
+println("ESS history: ", getfield.(result.state.diagnostics, :ess))
+println("Resampling stages: ", [d.stage for d in result.state.diagnostics if d.resampled])
 
 output_dir = joinpath(@__DIR__, "res", "ergodic_ipp")
 mkpath(output_dir)
@@ -306,7 +307,7 @@ current_frame = make_particle_filter_frame_fn(result;
     rollout_horizon = VOLCANO_HORIZON)
 heatmaps_frame = make_particle_heatmaps_frame_fn(result; animation_options...)
 
-timesteps = axes(result.posterior_history, 2)
+timesteps = eachindex(observed_actions)
 start_frames = [start_frame(t) for t in timesteps]
 current_frames = [current_frame(t) for t in timesteps]
 heatmap_frames = [heatmaps_frame(t) for t in timesteps]

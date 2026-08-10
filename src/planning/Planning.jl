@@ -5,13 +5,15 @@ using POMDPs
 using Crux
 using Flux
 using MCTS
+using Match: @match
 using MuKumari
+using Parameters: @with_kw, @with_kw_noshow
 using VulcanJ
 
 include("types.jl")
 include("interface.jl")
 include("cache.jl")
-include("planners.jl")
+include("native_adapters.jl")
 include("likelihoods.jl")
 
 export AbstractPlanner,

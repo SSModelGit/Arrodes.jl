@@ -2,8 +2,8 @@ module Arrodes
 
 using Reexport
 
-include("utils/Utils.jl")
-@reexport using .Utils
+include("orchestration/Orchestration.jl")
+@reexport using .Orchestration
 
 include("planning/Planning.jl")
 @reexport using .Planning

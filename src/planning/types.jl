@@ -9,18 +9,18 @@ struct BehaviorModel{P<:AbstractPlanner,L<:AbstractActionLikelihood}
 end
 
 """Information available when preparing or querying a planner."""
-Base.@kwdef struct PlanningContext{S,A,R,M}
+@with_kw_noshow struct PlanningContext
     hypothesis_id::Symbol
     timestep::Int = 1
-    states::S = Any[]
-    actions::A = Any[]
+    states = Any[]
+    actions = Any[]
     horizon::Int = 1
-    rng::R = Random.default_rng()
-    metadata::M = NamedTuple()
+    rng = Random.default_rng()
+    metadata = NamedTuple()
 end
 
 """Mutable cache of MDPs and planner artifacts for named hypotheses."""
-Base.@kwdef mutable struct PlanningCache
+@with_kw_noshow mutable struct PlanningCache
     mdps::Dict{Symbol,Any} = Dict{Symbol,Any}()
     artifacts::Dict{Any,Any} = Dict{Any,Any}()
 end
@@ -41,9 +41,9 @@ struct CallbackArtifact{T} <: AbstractPlanArtifact
 end
 
 """Score deterministic plans using both action noise and the MDP transition noise."""
-Base.@kwdef struct MovementNoiseLikelihood{D} <: AbstractActionLikelihood
+@with_kw_noshow struct MovementNoiseLikelihood <: AbstractActionLikelihood
     n_transition_samples::Int = 64
     bandwidth::Float64 = 0.25
     action_epsilon::Float64 = 0.02
-    state_distance::D = nothing
+    state_distance::Union{Nothing,Function} = nothing
 end
