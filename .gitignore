@@ -1,7 +1,10 @@
 /Manifest.toml
-.vscode/
-log/
+/bigdata/
+/examples/pipelines/Manifest.toml
+/examples/pipelines/results/
+/literature/
+/test/Manifest.toml
+/.vscode/
 *.bson
-literature/*
-bigdata/
+/log/
 docs/

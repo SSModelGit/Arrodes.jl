@@ -1,103 +1,80 @@
 # Arrodes
 
-Arrodes is a behavior-inference engine for distributed agents. It solves two
-complementary inverse problems:
+Arrodes infers hidden causes of agent behavior. It supports two complementary
+inverse problems:
 
-- objective inference: the world is known and the agent's objective is one of a
-  finite set of domain-authored hypotheses;
-- world inference: the objective is known, environmental observations are hidden,
-  and the agent's effective world belief is inferred in the ego agent's SCRIBE EOF
-  coordinates.
+- **objective inference:** infer which discrete, domain-authored objective explains
+  behavior in a known world;
+- **world inference:** infer the observed agent's effective world belief from
+  behavior under a known objective.
 
-Both problems use one sequential target-ratio runtime for weighted particles,
-SMC-P3 paired proposals, normalization, ESS/CESS, resampling, ancestry, and
-diagnostics. They retain different latent spaces and evidence models. MuKumari owns
-MDP simulation and SCRIBE owns EOF modeling and physical sensor assimilation;
-Arrodes owns inversion from behavior.
+Arrodes does not duplicate the surrounding robotics stack. MuKumari supplies agent
+MDPs and simulation, VulcanJ supplies information-based and ergodic planners, and
+SCRIBE supplies EOF environment models and physical observation updates. Arrodes
+owns behavior evidence, sequential inference, and deployment of inferred
+information.
 
-The current development environment expects sibling checkouts of the three local
-packages. Resolve them once with Julia's package manager:
+## Architecture
+
+The package has four public layers:
+
+- `Orchestration` constructs MuKumari agents without taking ownership of their
+  simulation mechanics.
+- `Planning` provides a common behavior-model interface for Crux Soft-Q, MuKumari
+  MCTS/DPW, VulcanJ InfoMCTS and ergodic planning, arbitrary `POMDPs.Solver`
+  implementations, and user callbacks.
+- `Inference` contains the shared SMC-P3 runtime and the distinct objective and
+  world inference models.
+- `Visualizations` contains the complete objective-filter and world-filter
+  diagnostic animations.
+
+The shared sequential runtime handles target-ratio weighting, paired forward and
+backward proposal densities, ESS/CESS, resampling, rejuvenation, ancestry, and
+stage diagnostics. Objective and world inference share that machinery while
+retaining different latent states, targets, and proposal kernels.
+
+### Objective inference
+
+An `ObjectiveHypothesis` binds a stable identifier and prior probability to an
+objective, planner, and action likelihood. Exact enumeration is available as a
+reference for small hypothesis sets; SMC is the scalable implementation.
 
 ```julia
-using Pkg
-Pkg.develop([
-    Pkg.PackageSpec(path="../MuKumari"),
-    Pkg.PackageSpec(path="../VulcanJ"),
-    Pkg.PackageSpec(path="../SCRIBE"),
-])
-```
+hypotheses = [
+    ObjectiveHypothesis(
+        id=:goal,
+        objective=goal_reward,
+        behavior=BehaviorModel(goal_planner, EpsilonGreedyLikelihood(epsilon=0.05)),
+        prior_probability=0.6,
+    ),
+    ObjectiveHypothesis(
+        id=:explore,
+        objective=information_reward,
+        behavior=BehaviorModel(ergodic_planner, PlanTrackingLikelihood(epsilon=0.1)),
+        prior_probability=0.4,
+    ),
+]
 
-## Objective inference
-
-An `ObjectiveHypothesis` contains a stable ID, objective, prior mass, planner, and
-behavior likelihood. Exact enumeration is the reference backend. SMC uses identity
-propagation by default and full-prefix replay Metropolis–Hastings only as an
-invariant move after resampling.
-
-```julia
 problem = ObjectiveInferenceProblem(
-    hypotheses=[
-        ObjectiveHypothesis(
-            id=:goal,
-            objective=goal_reward,
-            behavior=BehaviorModel(
-                POMDPSolverPlanner((mdp, context) -> GoalSolver()),
-                EpsilonGreedyLikelihood(epsilon=0.05),
-            ),
-            prior_probability=0.7,
-        ),
-        ObjectiveHypothesis(
-            id=:explore,
-            objective=information_reward,
-            behavior=BehaviorModel(
-                OpenLoopPlanner(ergodic_plan),
-                PlanTrackingLikelihood(epsilon=0.1),
-            ),
-            prior_probability=0.3,
-        ),
-    ],
+    hypotheses=hypotheses,
     mdp_builder=(objective, hypothesis) -> build_mdp(objective),
 )
 
-config = SMCConfig(
-    n_particles=512,
-    invariant_move=ObjectiveReplayMove(),
-    invariant_steps=2,
+result = infer_objectives_smc(
+    problem,
+    observed_states,
+    observed_actions,
+    SMCConfig(n_particles=512, invariant_move=ObjectiveReplayMove()),
 )
-result = infer_objectives_smc(problem, observed_states, observed_actions, config)
-best_hypothesis(result)
 ```
 
-Built-in planner adapters cover Crux Soft-Q, MuKumari MCTS/DPW, VulcanJ
-InfoMCTS, VulcanJ ergodic paths, any `POMDPs.Solver`, callbacks, and open-loop
-optimizers. Planner construction has one canonical signature; planning and
-demonstrator noise remain separate.
+### World inference
 
-## Behavior-only world inference
-
-`scribe_world_context` freezes one SCRIBE EOF basis, model time, current
-coefficient vector, and coefficient covariance for an inference window. A direct
-ergodic evidence model combines:
-
-- the complete three-term kernel MMD between trajectory occupation and a normalized
-  candidate-world target measure;
-- mean trajectory reward;
-- fixed prior-predictive calibration scales;
-- a Hill maturity schedule and UCB-inspired reward/discrepancy mixture.
-
-Each observed location creates one natural behavior-prefix target. There is no
-additional `λ`-tempered world target. `WorldKernelMixture` moves particles toward that
-target through distance-controlled bridges in SCRIBE-prior-whitened EOF coordinates.
-Its local branch uses a positive behavioral Fisher/Gauss--Newton information metric;
-the other branches provide affine amortized and prior-refresh support. The SMC-P3
-correction includes old/new targets, forward/backward densities, branch mass, and
-coordinate density terms.
-
-`PriorPCNKernel` is the inexpensive prior-reversible baseline for larger EOF
-studies. It preserves exact paired-proposal accounting but is not target-adapted.
-The default `AffineAmortizedTransport` is likewise an affine baseline: a genuinely
-amortized trajectory-to-world proposal still requires user-supplied parameters
-trained on prior-predictive trajectories.
+World inference operates in one frozen SCRIBE EOF coordinate system for each
+inference window. Candidate coefficient vectors are evaluated from behavior using
+kernel discrepancy, trajectory reward, or a calibrated combination of both.
+`WorldKernelMixture` combines local Langevin transport, affine transport, and
+prior-refresh proposals with exact forward/backward accounting.
 
 ```julia
 context = scribe_world_context(eof_model, ego_information)
@@ -109,60 +86,64 @@ evidence = DirectErgodicEvidence(
     energy=WorldEnergyConfig(discrepancy_scale=s_D, reward_scale=s_R),
 )
 problem = WorldInferenceProblem(context=context, evidence=evidence)
-config = SMCConfig(
-    scheduler=OneStagePerObservation(),
-    kernel=WorldKernelMixture(),
-    paired_moves_per_stage=2,
+
+result = infer_world(
+    problem,
+    trajectory_observations,
+    SMCConfig(kernel=WorldKernelMixture(), paired_moves_per_stage=2),
 )
-result = infer_world(problem, trajectory_observations, config)
 ```
 
-World inference accepts behavior only. If the observed agent's environmental
-measurements or information state are available, use SCRIBE's conditioning or
-consensus mechanics directly. The example
-`scribe_direct_observation_bypass.jl` demonstrates that boundary.
+World inference is only appropriate when the observed agent's environmental
+measurements and information state are hidden. If either is available, it should be
+assimilated directly with SCRIBE.
 
-Weighted particles are authoritative. `blended_coefficients` performs the default
-mean-only deployment through a maturity/confidence-weighted trust-radius step from
-the ego coefficient vector. `deploy_behavior_information` can separately derive a
-Gaussian pseudo-information increment for SCRIBE consumers, but accepts it exactly
-only when the increment is positive semidefinite. A requested PSD projection is
-reported as lossy, and the resulting `KFEnvInfo` has zero sensor-innovation fields.
+## Local dependencies
 
-## Physical time and distributed agents
+Development expects sibling checkouts of MuKumari, VulcanJ, and SCRIBE:
 
-`DynamicWorldInferenceProblem` carries coefficient paths and applies SCRIBE's `Q`
-once per real environment transition—never per observation bridge or proposal move.
-`DistributedWorldInferenceProblem` requires explicit shared, agent-specific, or
-hierarchical beliefs and explicit conditionally independent or joint behavior
-evidence. Parallel evaluation therefore never silently asserts independence.
+```julia
+using Pkg
 
-## Examples and literature
+Pkg.develop([
+    Pkg.PackageSpec(path="../MuKumari"),
+    Pkg.PackageSpec(path="../VulcanJ"),
+    Pkg.PackageSpec(path="../SCRIBE"),
+])
+Pkg.instantiate()
+```
 
-Maintained pipelines live in `examples/pipelines/` and write under a matching
-`res/<pipeline-name>/` directory:
+## Examples
 
-- `default_pipeline.jl`: small named-objective inference and all objective animations;
-- `ergodic_ipp_pipeline.jl`: five VulcanJ volcano-search objectives using InfoMCTS
-  and ergodic planning;
-- `scribe_world_inference_pipeline.jl`: behavior-only world inference on the ROMS
-  archive used by SCRIBE. It directly reuses SCRIBE's ROMS example loader and EOF
-  settings. The SCRIBE scenario snapshots 3030 and 5302 define the ego and
-  observed-agent coefficient vectors, VulcanJ generates a 100-location
-  kernel-ergodic trajectory, and Arrodes runs matched combined, MMD-only, and
-  reward-only filters over all 100 locations. Its field animation is a 2×2 comparison
-  with the static observed-agent EOF mean and growing trajectory in the top-left,
-  combined inference in the top-right, MMD-only inference in the bottom-left, and
-  reward-only inference in the bottom-right. It also produces the combined
-  coefficient comparison and consolidated particle-health diagnostics;
-- `scribe_direct_observation_bypass.jl`: direct SCRIBE assimilation when measurements
-  are available;
-- `ayton_query_inference_pipeline.jl`: domain-authored query objectives.
+The maintained pipelines are:
 
-The mathematical designs, teaching treatment, unified architecture, and implementation
-goal/style guide are in `literature/`. The executable architecture is described in
-`docs/architecture.md`; the current world-branch audit and its remaining limitations
-are recorded in `docs/world_inference_audit.md`.
+- `examples/pipelines/default_pipeline.jl` — compact discrete objective inference
+  with the complete objective diagnostic animation set;
+- `examples/pipelines/ergodic_ipp_pipeline.jl` — five volcano-search objectives
+  using VulcanJ InfoMCTS and ergodic planners;
+- `examples/pipelines/scribe_world_inference_pipeline.jl` — ROMS/SCRIBE world
+  inference comparing combined, MMD-only, and reward-only evidence.
 
-Generic RFF/RBF objective fields remain isolated under `src/deprecated/` for old
-experiments. They are not part of either inference target.
+Examples write generated plots and animations to
+`examples/pipelines/results/<pipeline>/`. That directory is ignored and created at
+runtime. The ROMS example expects the SCRIBE archive at
+`bigdata/rams_head_model_output/stjohn_hourly_5m_velocity_ramhead_v2.mat`; `bigdata/`
+is intentionally ignored because the dataset is local input, not package source.
+
+Run an example from its environment with:
+
+```sh
+julia --project=examples/pipelines examples/pipelines/default_pipeline.jl
+```
+
+## Validation
+
+The tests are small executable pipeline checks rather than a separate mock
+architecture:
+
+```sh
+julia --project=. -e 'using Pkg; Pkg.test()'
+```
+
+The mathematical treatments and implementation retrospectives in `literature/`
+are personal design records and are not part of the package runtime.

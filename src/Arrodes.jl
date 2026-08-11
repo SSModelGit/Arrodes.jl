@@ -11,9 +11,6 @@ include("planning/Planning.jl")
 include("inference/Inference.jl")
 @reexport using .Inference
 
-include("deprecated/ObjectiveFields.jl")
-@reexport using .ObjectiveFields
-
 include("viz/Visualizations.jl")
 @reexport using .Visualizations
 
