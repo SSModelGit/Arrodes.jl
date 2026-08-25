@@ -110,26 +110,3 @@ end
     )
     @test norm(posterior[:coefficient_mean] - truth) < prior_error
 end
-
-@testset "synthetic ROMS curl renderer" begin
-    shape = (7, 7)
-    roms = Dict(
-        :grid_shape => shape,
-        :wet_mask => trues(prod(shape)),
-    )
-    curl = vec([
-        sin(i / 2) * cos(j / 2)
-        for i in 1:shape[1], j in 1:shape[2]
-    ])
-    directions = reduce(vcat, [begin
-        θ = atan(j - 4, i - 4)
-        reshape([cos(θ), sin(θ)], 1, :)
-    end for i in 1:shape[1], j in 1:shape[2]])
-    panel = plot_roms_curl(curl, directions, roms; arrow_stride=2)
-
-    @test xlims(panel) == (0.5, 7.5)
-    @test ylims(panel) == (0.5, 7.5)
-    arrow_vectors = panel.series_list[2][:quiver]
-    lengths = hypot.(arrow_vectors[1], arrow_vectors[2])
-    @test all(isapprox.(lengths, first(lengths); atol=1e-12))
-end

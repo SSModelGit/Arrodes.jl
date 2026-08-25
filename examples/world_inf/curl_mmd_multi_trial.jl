@@ -41,9 +41,14 @@ function run_trial(
     snapshot,
     trial,
 )
+    raw_field = Vector{Float64}(view(
+        scenario[:roms][:data],
+        :,
+        snapshot,
+    ))
     coefficients = SCRIBE.eof_coefficients(
         scenario[:model],
-        scenario[:roms][:data][:, snapshot],
+        raw_field,
     )
     observed = Dict(
         :coefficients => coefficients,
@@ -51,6 +56,25 @@ function run_trial(
             scenario[:model];
             coefficients,
         ),
+    )
+    reconstruction_error = observed[:field] - raw_field
+    raw_rms = sqrt(mean(abs2, raw_field))
+    eof_rms = sqrt(mean(abs2, observed[:field]))
+    curl_diagnostics = Dict(
+        :raw_min => minimum(raw_field),
+        :raw_max => maximum(raw_field),
+        :raw_rms => raw_rms,
+        :eof_min => minimum(observed[:field]),
+        :eof_max => maximum(observed[:field]),
+        :eof_rms => eof_rms,
+        :rms_retention => eof_rms / max(raw_rms, eps(Float64)),
+        :relative_reconstruction_error => norm(reconstruction_error) /
+            max(norm(raw_field), eps(Float64)),
+    )
+    println(
+        "  curl audit: raw RMS=$(round(1e3curl_diagnostics[:raw_rms]; digits=3)), " *
+        "rank-$(mission[:roms][:eof_rank]) RMS=$(round(1e3curl_diagnostics[:eof_rms]; digits=3)) " *
+        "(10⁻³ s⁻¹), relative EOF error=$(round(curl_diagnostics[:relative_reconstruction_error]; digits=3))",
     )
     target_problem = WorldInferenceProblem(
         context=scenario[:context],
@@ -145,6 +169,7 @@ function run_trial(
         :truth_field => observed[:field],
         :inferred_field => inferred_field,
         :truth_coefficients => observed[:coefficients],
+        :curl_diagnostics => curl_diagnostics,
         :flow_directions => flow_directions,
         :problem => problem,
         :result => result,
@@ -168,7 +193,7 @@ function save_world_trial_reconstructions(path, trials, roms, arrow_stride)
             trial[:flow_directions],
             roms;
             arrow_stride=2arrow_stride,
-            title="T$(lpad(trial[:trial], 2, '0')) observed (±$(round(limit; sigdigits=2)))",
+            title="T$(lpad(trial[:trial], 2, '0')) observed (±$(round(1e3limit; sigdigits=2)) ×10⁻³ s⁻¹)",
             limit,
             colorbar=false,
         )
@@ -194,11 +219,11 @@ function save_world_trial_reconstructions(path, trials, roms, arrow_stride)
     savefig(
         plot(
             panels...;
-            layout=(10, 2),
-            size=(1500, 4200),
+            layout=(5, 4),
+            size=(3600, 2100),
             plot_title="Signed curl and equal-length ROMS flow directions",
-            plot_titlefontsize=16,
-            titlefontsize=10,
+            plot_titlefontsize=20,
+            titlefontsize=12,
         ),
         path,
     )
@@ -207,6 +232,27 @@ end
 function save_results(mission, scenario, trials)
     output = normpath(joinpath(@__DIR__, mission[:output]))
     mkpath(output)
+    diagnostics = Dict(
+        "curl_units" => "s^-1",
+        "display_units" => "10^-3 s^-1",
+        "definition" => "vertical vorticity dv/dx - du/dy",
+        "velocity_assumption" => "u eastward and v northward on the collocated lon/lat grid",
+        "eof_rank" => mission[:roms][:eof_rank],
+        "trials" => [merge(
+            Dict(
+                "trial" => trial[:trial],
+                "snapshot" => trial[:snapshot],
+            ),
+            Dict(
+                String(key) => value
+                for (key, value) in trial[:curl_diagnostics]
+            ),
+        ) for trial in trials],
+    )
+    open(joinpath(output, "curl_reconstruction_diagnostics.json"), "w") do io
+        JSON3.pretty(io, diagnostics)
+        write(io, '\n')
+    end
     savefig(
         plot_world_trial_recovery(trials),
         joinpath(output, "recovery_across_ten_worlds.png"),

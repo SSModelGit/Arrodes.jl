@@ -47,6 +47,7 @@ function target_measure(problem::WorldInferenceProblem, coefficients)
     masses ./ sum(masses)
 end
 
+"""Squared kernel MMD between two normalized world-induced target measures."""
 function target_measure_mmd(
     problem::WorldInferenceProblem,
     left_coefficients,

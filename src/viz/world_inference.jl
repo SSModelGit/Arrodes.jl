@@ -53,7 +53,7 @@ function plot_world_coefficient_comparison(
         xlabel="EOF mode",
         title="Inferred coefficients after $timestep locations",
     )
-    plot(observed, inferred; layout=(2, 1), size=(1100, 760))
+    plot(observed, inferred; layout=(2, 1), size=(1300, 850))
 end
 
 function save_world_coefficient_animation(
@@ -135,8 +135,8 @@ function plot_world_posterior_comparison(
         observed,
         inferred;
         layout=(1, 2),
-        size=(1400, 650),
-        titlefontsize=12,
+        size=(2200, 620),
+        titlefontsize=15,
     )
 end
 
@@ -226,6 +226,7 @@ function plot_world_particle_distribution(
         xlabel="ego→observed coordinate (prior σ)",
         ylabel="dominant orthogonal coordinate (prior σ)",
         title="EOF particles in a prior-whitened linear plane",
+        size=(1200, 800),
     )
     scatter!(
         panel,
@@ -282,7 +283,7 @@ function plot_world_particle_health(
         linewidth=2,
         label=false,
         xlabel="observed locations",
-        ylabel="target-measure MMD",
+        ylabel="target-measure MMD²",
         title="Behavioral target discrepancy",
     )
     particles = plot_world_particle_distribution(
@@ -291,7 +292,7 @@ function plot_world_particle_health(
         prior_mean,
         prior_covariance,
     )
-    plot(ess, spread, recovery, particles; layout=(2, 2), size=(1200, 900))
+    plot(ess, spread, recovery, particles; layout=(2, 2), size=(1600, 1100))
 end
 
 function save_world_inference_visualizations(
@@ -377,7 +378,8 @@ function plot_world_trial_recovery(trials)
         linewidth=2,
         label="ego prior",
         xlabel="ego-to-observed distance (prior σ)",
-        ylabel="target-measure MMD",
+        ylabel="target-measure MMD²",
+        size=(1200, 700),
     )
     plot!(
         panel,
@@ -413,7 +415,7 @@ function plot_world_trial_particles(trials, prior_mean, prior_covariance)
     plot(
         panels...;
         layout=(2, 5),
-        size=(2100, 900),
+        size=(3000, 1300),
         plot_title="Initial and final particles in each trial's prior-whitened plane",
         plot_titlefontsize=14,
     )
@@ -451,7 +453,7 @@ function plot_world_result_comparison(
               for (name, field) in zip(ordering, inferred_fields)]
     columns = 2
     rows = ceil(Int, (length(panels) + 1) / columns)
-    plot(observed, panels...; layout=(rows, columns), size=(1200, 490rows))
+    plot(observed, panels...; layout=(rows, columns), size=(2200, 540rows))
 end
 
 function save_world_result_comparison_animation(
