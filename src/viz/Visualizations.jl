@@ -2,14 +2,21 @@ module Visualizations
 
 using Colors
 using LinearAlgebra
+import MuKumari
 using Plots
 using Random
-using SCRIBE
+import SCRIBE
+using Statistics
 
-using ..Inference
-using ..Planning
+using ..ObjectiveInference: ObjectiveInferenceProblem, objective_probabilities
+using ..ObjectiveInference: hypothesis_index, hypothesis_mdp
+using ..ObjectiveInference: objective_observation_count
+using ..ObjectiveInference: top_objective_hypotheses
+using ..BehaviorModels: prepare_behavior, rollout_behavior
+using ..WorldInference: WorldInferenceResult, target_measure_mmd, world_posterior
 
 include("filter_explanations.jl")
+include("world_inference.jl")
 
 export plot_particle_filter_explanation,
     plot_particle_filter_frame,
@@ -19,11 +26,11 @@ export plot_particle_filter_explanation,
     animate_particle_filter_from_frames,
     save_particle_filter_animation,
     quick_heatmap,
-    plot_world_filter_frame,
-    plot_world_diagnostics,
-    plot_world_modes,
-    plot_world_ancestry,
-    plot_world_deployment,
-    plot_world_particle_plans
+    plot_world_particle_distribution,
+    plot_world_trial_recovery,
+    plot_world_trial_particles,
+    save_world_inference_visualizations,
+    plot_world_result_comparison,
+    save_world_result_comparison_animation
 
 end

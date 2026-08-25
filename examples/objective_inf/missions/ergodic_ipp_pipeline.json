@@ -1,0 +1,12 @@
+{
+  "name": "volcano_mixed_planner_objective_inference",
+  "peak_threshold": 7.0,
+  "horizon": 8,
+  "filter": {
+    "particles": 240,
+    "refresh_probability": 0.05,
+    "ess_threshold": 0.65,
+    "rejuvenation_steps": 3
+  },
+  "output": "../results/objective_inf/ergodic_ipp"
+}

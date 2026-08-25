@@ -1,56 +1,72 @@
 # Arrodes
 
-Arrodes infers hidden causes of agent behavior. It supports two complementary
+Arrodes infers hidden causes of observed agent behavior through two complementary
 inverse problems:
 
-- **objective inference:** infer which discrete, domain-authored objective explains
+- objective inference learns which finite, domain-authored objective explains
   behavior in a known world;
-- **world inference:** infer the observed agent's effective world belief from
-  behavior under a known objective.
+- world inference learns the observed agent's effective SCRIBE EOF world belief
+  from behavior under a known objective.
 
-Arrodes does not duplicate the surrounding robotics stack. MuKumari supplies agent
-MDPs and simulation, VulcanJ supplies information-based and ergodic planners, and
-SCRIBE supplies EOF environment models and physical observation updates. Arrodes
-owns behavior evidence, sequential inference, and deployment of inferred
-information.
+Arrodes is an inference package, not a robotics system architecture. MuKumari
+owns agent MDPs and simulation, VulcanJ owns information and ergodic planning,
+and SCRIBE owns EOF environment models and physical observation updates. Gen,
+GenParticleFilters, and GenSMCP3 execute both particle filters.
 
-## Architecture
+## Package structure
 
-The package has four public layers:
+The source tree contains five actual Julia modules:
 
-- `Orchestration` constructs MuKumari agents without taking ownership of their
-  simulation mechanics.
-- `Planning` provides a common behavior-model interface for Crux Soft-Q, MuKumari
-  MCTS/DPW, VulcanJ InfoMCTS and ergodic planning, arbitrary `POMDPs.Solver`
-  implementations, and user callbacks.
-- `Inference` contains the shared SMC-P3 runtime and the distinct objective and
-  world inference models.
-- `Visualizations` contains the complete objective-filter and world-filter
-  diagnostic animations.
+- `BehaviorModels` directly invokes supported native planners when an objective
+  particle must predict behavior;
+- `ObjectiveInference` defines the discrete Gen trace and its SMCP3 proposals;
+- `WorldInference` defines the continuous SCRIBE-coordinate Gen trace, scores,
+  and paired forward/backward proposals;
+- `Offline` provides the small amount of calibration used by executable
+  missions;
+- `Visualizations` contains reusable objective- and world-inference plots.
 
-The shared sequential runtime handles target-ratio weighting, paired forward and
-backward proposal densities, ESS/CESS, resampling, rejuvenation, ancestry, and
-stage diagnostics. Objective and world inference share that machinery while
-retaining different latent states, targets, and proposal kernels.
+There is no Arrodes particle-filter runtime. Gen represents uncertain traces,
+GenParticleFilters owns particles, weights, ESS, resampling, and rejuvenation,
+and GenSMCP3 evaluates the paired forward/backward proposal correction.
 
-### Objective inference
+## Objective inference
 
-An `ObjectiveHypothesis` binds a stable identifier and prior probability to an
-objective, planner, and action likelihood. Exact enumeration is available as a
-reference for small hypothesis sets; SMC is the scalable implementation.
+An objective trace contains a discrete objective identity. The target after
+observing actions through time `t` is
+
+```math
+\gamma_t(h)=\rho_h\exp\!\left[\sum_{r=1}^t \ell_r(h)\right].
+```
+
+The forward kernel uses a reversible persistence/refresh transition over the
+finite objective set. The backward kernel uses the corresponding conditional
+law. Native planners are invoked only to evaluate
+`p(observed action | objective, known world)`; Arrodes does not execute the
+mission planner.
 
 ```julia
 hypotheses = [
     ObjectiveHypothesis(
         id=:goal,
         objective=goal_reward,
-        behavior=BehaviorModel(goal_planner, EpsilonGreedyLikelihood(epsilon=0.05)),
+        behavior=BehaviorModel(
+            MCTSPlanner(n_iterations=500),
+            EpsilonGreedyLikelihood(epsilon=0.05),
+        ),
         prior_probability=0.6,
     ),
     ObjectiveHypothesis(
         id=:explore,
         objective=information_reward,
-        behavior=BehaviorModel(ergodic_planner, PlanTrackingLikelihood(epsilon=0.1)),
+        behavior=BehaviorModel(
+            VulcanErgodicPlanner(
+                gp=build_gp,
+                n_steps=20,
+                options=Dict(:optimizer_iters => 80),
+            ),
+            MovementNoiseLikelihood(),
+        ),
         prior_probability=0.4,
     ),
 ]
@@ -58,92 +74,146 @@ hypotheses = [
 problem = ObjectiveInferenceProblem(
     hypotheses=hypotheses,
     mdp_builder=(objective, hypothesis) -> build_mdp(objective),
+    states=observed_states,
+    actions=observed_actions,
 )
 
-result = infer_objectives_smc(
-    problem,
-    observed_states,
-    observed_actions,
-    SMCConfig(n_particles=512, invariant_move=ObjectiveReplayMove()),
-)
+result = infer_objectives(problem; n_particles=512)
+probabilities = objective_probabilities(result)
 ```
 
-### World inference
+Exact enumeration remains an internal validation oracle for small finite sets;
+it is not a second inference architecture.
 
-World inference operates in one frozen SCRIBE EOF coordinate system for each
-inference window. Candidate coefficient vectors are evaluated from behavior using
-kernel discrepancy, trajectory reward, or a calibrated combination of both.
-`WorldKernelMixture` combines local Langevin transport, affine transport, and
-prior-refresh proposals with exact forward/backward accounting.
+## World inference
+
+A world trace contains one candidate SCRIBE EOF coefficient vector for the
+observed agent's effective world belief. The calling application supplies a
+frozen SCRIBE model, prior covariance, target measure, and observed trajectory.
+Arrodes never mutates a live SCRIBE information state.
+
+For ergodic behavior, the generalized log score uses the MMD between trajectory
+occupancy and the candidate-world target measure. A known query score can be
+added through an explicitly visible horizon schedule, which must be calibrated
+offline for that query. There is no implicit online UCB fallback.
 
 ```julia
-context = scribe_world_context(eof_model, ego_information)
-evidence = DirectErgodicEvidence(
-    location=state -> state.x,
-    reward=known_reward,
-    importance=target_measure_link,
-    kernel=GaussianDiscrepancyKernel(bandwidth=1.0),
-    energy=WorldEnergyConfig(discrepancy_scale=s_D, reward_scale=s_R),
+context = world_inference_context(
+    ego_eof_model;
+    prior_covariance=observed_world_prior_covariance,
 )
-problem = WorldInferenceProblem(context=context, evidence=evidence)
+target = eof_target_field(link=:magnitude)
+score = eof_field_score(
+    target;
+    kernel_bandwidth=0.2,
+    discrepancy_scale=calibrated_discrepancy_scale,
+    β_max=7.0,
+    maturity_half_time=18.0,
+)
+problem = WorldInferenceProblem(
+    context=context,
+    score=score,
+    observations=trajectory,
+)
 
-result = infer_world(
-    problem,
-    trajectory_observations,
-    SMCConfig(kernel=WorldKernelMixture(), paired_moves_per_stage=2),
-)
+proposal = default_world_proposal()
+result = infer_world(problem; n_particles=512, proposal)
+posterior = world_posterior(result)
 ```
 
-World inference is only appropriate when the observed agent's environmental
-measurements and information state are hidden. If either is available, it should be
-assimilated directly with SCRIBE.
+The default proposal is the symmetric SCRIBE-process random walk
 
-## Local dependencies
-
-Development expects sibling checkouts of MuKumari, VulcanJ, and SCRIBE:
-
-```julia
-using Pkg
-
-Pkg.develop([
-    Pkg.PackageSpec(path="../MuKumari"),
-    Pkg.PackageSpec(path="../VulcanJ"),
-    Pkg.PackageSpec(path="../SCRIBE"),
-])
-Pkg.instantiate()
+```math
+\phi^+\sim\mathcal N(\phi^-,c_QQ_\phi),
 ```
+
+with the matching reversed Gaussian used by GenSMCP3. The mission selects one
+proposal mechanism for the whole run. Two alternatives remain available:
+
+- pCN supplies prior-reversible correlated movement using the initial SCRIBE
+  covariance `P₀`;
+- Langevin uses the target-score gradient and a fixed preconditioner derived
+  from SCRIBE process covariance `Qϕ`.
+
+These mechanisms are alternatives, not a mixture. Changing the random-walk
+scale does not change the initial ego-centered prior.
+
+World inference is used only when the observed agent's measurements and
+information state are hidden. Available measurements should be assimilated by
+SCRIBE directly.
+
+## Native solver support
+
+Objective hypotheses can use:
+
+- an existing `POMDPs.Solver` directly;
+- Crux Soft-Q;
+- standard or DPW MCTS;
+- VulcanJ risk-bounded InfoMCTS;
+- VulcanJ one-shot ergodic planning;
+- a fixed known action for compact demonstrations and validation.
+
+The adapters are direct multiple-dispatch methods. Arrodes does not define a
+policy-artifact hierarchy, callback-planner framework, cache-scope API, or
+fallback dependency probing.
 
 ## Examples
 
-The maintained pipelines are:
+Examples are research missions, not APIs. Each mission has one JSON dictionary
+and a direct script:
 
-- `examples/pipelines/default_pipeline.jl` — compact discrete objective inference
-  with the complete objective diagnostic animation set;
-- `examples/pipelines/ergodic_ipp_pipeline.jl` — five volcano-search objectives
-  using VulcanJ InfoMCTS and ergodic planners;
-- `examples/pipelines/scribe_world_inference_pipeline.jl` — ROMS/SCRIBE world
-  inference comparing combined, MMD-only, and reward-only evidence.
+- `examples/objective_inf/default_pipeline.jl`;
+- `examples/objective_inf/ergodic_ipp_pipeline.jl`;
+- `examples/world_inf/direct_environment.jl`;
+- `examples/world_inf/curl_mmd_multi_trial.jl`;
+- `examples/world_inf/score_comparison.jl`.
 
-Examples write generated plots and animations to
-`examples/pipelines/results/<pipeline>/`. That directory is ignored and created at
-runtime. The ROMS example expects the SCRIBE archive at
-`bigdata/rams_head_model_output/stjohn_hourly_5m_velocity_ramhead_v2.mat`; `bigdata/`
-is intentionally ignored because the dataset is local input, not package source.
+The score-comparison mission preserves the requested MMD/query/combined
+visual ablation, but it is not the final Spock validation: its checked-in
+mixing schedule is an explicit mission artifact. Query-specific supervised
+calibration and non-ergodic Ayton-query behavior remain deferred until
+SpockQueryFramework exists.
 
-Run an example from its environment with:
+The default objective mission retains plans-from-start, plans-from-current,
+objective-heatmap animations, and the final explanation plot. Reusable world
+posterior, coefficient, particle-distribution, and particle-health compositions
+and animations live in `Arrodes.Visualizations`. Static SCRIBE posterior maps
+already live in SCRIBE, while ROMS field maps and curl magnitude/quiver maps
+are supplied by `SCRIBE.ROMSTools`. Only aggregate multi-trial plots remain
+beside the curl mission. ROMS loading, coordinate conversion, curl construction,
+decimation, EOF preparation, and grid conversion also belong to
+`SCRIBE.ROMSTools`. Mission-specific ergodic quadrature selection remains with
+the world-inference missions.
+
+Every world-inference result produces final posterior and coefficient
+comparisons, particle-distribution and particle-health plots, and posterior and
+coefficient animations. Score ablations store the full set under `combined/`,
+`mmd/`, and `query/`. Multi-trial missions store the full set under one
+`trial_XX/` directory per trial in addition to their aggregate plots.
+
+The first world validation is:
 
 ```sh
-julia --project=examples/pipelines examples/pipelines/default_pipeline.jl
+julia --project=examples examples/world_inf/curl_mmd_multi_trial.jl
 ```
 
-## Validation
+It learns a rank-32 SCRIBE model from ROMS curl snapshots, generates VulcanJ
+trajectories ergodic to absolute scalar vorticity, and performs ten MMD-only
+inference trials spanning nearby through distant observed-agent beliefs. Curl
+is treated as scalar out-of-plane vorticity; fixed-length contour-tangent glyphs
+show circulation orientation without inventing an in-plane curl vector.
 
-The tests are small executable pipeline checks rather than a separate mock
-architecture:
+The examples run trials sequentially and set BLAS to one thread. Arrodes does
+not run examples during package tests.
 
-```sh
-julia --project=. -e 'using Pkg; Pkg.test()'
-```
+## Development
 
-The mathematical treatments and implementation retrospectives in `literature/`
-are personal design records and are not part of the package runtime.
+Development expects sibling checkouts of MuKumari, VulcanJ, and SCRIBE and the
+unregistered GenSMCP3 dependencies already recorded in the manifest. Dependency
+installation is intentionally left to the user.
+
+Tests are two small usage demonstrations rather than API, compilation, or
+component-verification suites. One toy trajectory demonstrates objective
+inference, and one toy EOF field demonstrates world inference. The ROMS,
+planner, visualization, and multi-trial studies remain executable missions in
+`examples/` and are not run as package tests.

@@ -1,7 +1,7 @@
 /Manifest.toml
 /bigdata/
-/examples/pipelines/Manifest.toml
-/examples/pipelines/results/
+/examples/Manifest.toml
+/examples/results/
 /literature/
 /test/Manifest.toml
 /.vscode/

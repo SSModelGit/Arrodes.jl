@@ -1,0 +1,12 @@
+{
+  "name": "default_objective_inference",
+  "observed_states": [[4.0, 4.0], [5.0, 5.0], [6.0, 6.0], [7.0, 7.0]],
+  "observed_actions": ["ne", "ne", "ne", "ne"],
+  "filter": {
+    "particles": 256,
+    "refresh_probability": 0.05,
+    "ess_threshold": 0.7,
+    "rejuvenation_steps": 2
+  },
+  "output": "../results/objective_inf/default_pipeline"
+}

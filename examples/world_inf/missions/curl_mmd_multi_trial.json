@@ -1,0 +1,53 @@
+{
+  "name": "roms_curl_mmd_multi_trial",
+  "roms_archive": "../../bigdata/rams_head_model_output/stjohn_hourly_5m_velocity_ramhead_v2.mat",
+  "representation": "curl",
+  "roms": {
+    "temporal_stride": 3,
+    "spatial_stride": 1,
+    "training_fraction": 0.8,
+    "eof_rank": 10,
+    "eof_oversample": 16,
+    "eof_power_iterations": 2,
+    "quadrature_count": 196,
+    "calibration_worlds": 9
+  },
+  "ego": {
+    "snapshot_fraction": 0.6666666666666666
+  },
+  "observed_world_prior": {
+    "archive_covariance_multiplier": 2.0
+  },
+  "target": {
+    "link": "magnitude",
+    "floor_fraction": 0.01,
+    "name": "absolute_curl"
+  },
+  "trajectory": {
+    "samples": 100,
+    "ergodic_iterations": 180
+  },
+  "filter": {
+    "particles": 512,
+    "ess_threshold": 0.65,
+    "rejuvenation_steps": 2,
+    "proposal": {
+      "mechanism": "random_walk",
+      "scale": 1.0
+    },
+    "beta_max": 7.0,
+    "maturity_half_time": 18.0,
+    "maturity_power": 2.0
+  },
+  "trials": {
+    "count": 10,
+    "candidate_snapshots": 60,
+    "seed": 1297439828
+  },
+  "visualization": {
+    "arrow_stride": 7,
+    "animation_frames": 80,
+    "fps": 8
+  },
+  "output": "../results/world_inf/curl_mmd_multi_trial"
+}

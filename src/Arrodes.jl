@@ -2,14 +2,17 @@ module Arrodes
 
 using Reexport
 
-include("orchestration/Orchestration.jl")
-@reexport using .Orchestration
+include("behavior/BehaviorModels.jl")
+@reexport using .BehaviorModels
 
-include("planning/Planning.jl")
-@reexport using .Planning
+include("inference/objectives/ObjectiveInference.jl")
+@reexport using .ObjectiveInference
 
-include("inference/Inference.jl")
-@reexport using .Inference
+include("inference/worlds/WorldInference.jl")
+@reexport using .WorldInference
+
+include("offline/Offline.jl")
+@reexport using .Offline
 
 include("viz/Visualizations.jl")
 @reexport using .Visualizations
