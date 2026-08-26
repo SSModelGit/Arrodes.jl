@@ -52,5 +52,5 @@
     "animation_frames": 80,
     "fps": 8
   },
-  "output": "../results/world_inf/curl_mmd_multi_trial"
+  "rel_output_path": "../results/world_inf/curl_mmd_multi_trial"
 }

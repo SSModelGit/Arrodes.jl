@@ -370,7 +370,7 @@ function save_world_trial_reconstructions(path, trials, roms, arrow_stride)
 end
 
 function save_results(mission, scenario, trials)
-    output = normpath(joinpath(@__DIR__, mission[:output]))
+    output = normpath(joinpath(@__DIR__, mission[:rel_output_path]))
     mkpath(output)
     diagnostics = Dict(
         "representation" => "normalized absolute-curl shape",
