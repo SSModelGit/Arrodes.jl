@@ -47,6 +47,18 @@ function target_measure(problem::WorldInferenceProblem, coefficients)
     masses ./ sum(masses)
 end
 
+function measure_mmd(problem, left, right, cache)
+    kernel = get!(cache, :target_kernel) do
+        kernel_matrix(
+            problem.score.kernel_bandwidth,
+            problem.context.kernel_locations,
+            problem.context.kernel_locations,
+        )
+    end
+    difference = left - right
+    max(dot(difference, kernel * difference), 0.0)
+end
+
 """Squared kernel MMD between two normalized world-induced target measures."""
 function target_measure_mmd(
     problem::WorldInferenceProblem,
@@ -54,16 +66,37 @@ function target_measure_mmd(
     right_coefficients,
     cache=Dict{Symbol,Any}(),
 )
-    kernel = get!(cache, :target_kernel) do
-        kernel_matrix(
-            problem.score.kernel_bandwidth,
-            problem.context.quadrature,
-            problem.context.quadrature,
+    measure_mmd(
+        problem,
+        target_measure(problem, left_coefficients),
+        target_measure(problem, right_coefficients),
+        cache,
+    )
+end
+
+function posterior_target_measure(problem, result::WorldInferenceResult)
+    posterior = zeros(size(problem.context.quadrature, 1))
+    for index in axes(result.final_particles, 2)
+        posterior .+= result.final_weights[index] .* target_measure(
+            problem,
+            view(result.final_particles, :, index),
         )
     end
-    difference = target_measure(problem, left_coefficients) -
-        target_measure(problem, right_coefficients)
-    max(dot(difference, kernel * difference), 0.0)
+    posterior
+end
+
+function target_measure_mmd(
+    problem::WorldInferenceProblem,
+    result::WorldInferenceResult,
+    coefficients,
+    cache=Dict{Symbol,Any}(),
+)
+    measure_mmd(
+        problem,
+        posterior_target_measure(problem, result),
+        target_measure(problem, coefficients),
+        cache,
+    )
 end
 
 function target_measure_jacobian(problem, coefficients; finite_difference=1e-4)
@@ -107,7 +140,7 @@ function trajectory_kernel_statistics(problem, timestep, cache)
         cross_kernel = kernel_matrix(
             problem.score.kernel_bandwidth,
             locations,
-            problem.context.quadrature,
+            problem.context.kernel_locations,
         )
         Dict(
             :empirical_energy => dot(weights, empirical_kernel, weights),
@@ -116,14 +149,13 @@ function trajectory_kernel_statistics(problem, timestep, cache)
     end
 end
 
-function kernel_discrepancy(problem, timestep, coefficients, cache=Dict{Symbol,Any}())
+function measure_discrepancy(problem, timestep, target, cache)
     timestep == 0 && return 0.0
-    target = target_measure(problem, coefficients)
     target_kernel = get!(cache, :target_kernel) do
         kernel_matrix(
             problem.score.kernel_bandwidth,
-            problem.context.quadrature,
-            problem.context.quadrature,
+            problem.context.kernel_locations,
+            problem.context.kernel_locations,
         )
     end
     trajectory = trajectory_kernel_statistics(problem, timestep, cache)
@@ -132,6 +164,29 @@ function kernel_discrepancy(problem, timestep, coefficients, cache=Dict{Symbol,A
         2dot(trajectory[:target_cross_mean], target) +
         dot(target, target_kernel, target),
         0.0,
+    )
+end
+
+function kernel_discrepancy(problem, timestep, coefficients, cache=Dict{Symbol,Any}())
+    measure_discrepancy(
+        problem,
+        timestep,
+        target_measure(problem, coefficients),
+        cache,
+    )
+end
+
+function kernel_discrepancy(
+    problem,
+    timestep,
+    result::WorldInferenceResult,
+    cache=Dict{Symbol,Any}(),
+)
+    measure_discrepancy(
+        problem,
+        timestep,
+        posterior_target_measure(problem, result),
+        cache,
     )
 end
 
@@ -241,8 +296,8 @@ function world_logscore_gradient(
         target_kernel = get!(cache, :target_kernel) do
             kernel_matrix(
                 score.kernel_bandwidth,
-                problem.context.quadrature,
-                problem.context.quadrature,
+                problem.context.kernel_locations,
+                problem.context.kernel_locations,
             )
         end
         trajectory = trajectory_kernel_statistics(problem, timestep, cache)

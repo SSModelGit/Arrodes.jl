@@ -20,6 +20,7 @@ export WorldInferenceContext, TrajectoryObservation, ErgodicTargetField
 export ErgodicBehaviorScore, WorldInferenceProblem, WorldInferenceResult
 export world_inference_context
 export eof_target_field, eof_field_score, target_measure, target_measure_mmd
+export posterior_target_measure
 export kernel_discrepancy
 export world_score_components
 export default_world_proposal, infer_world, world_posterior

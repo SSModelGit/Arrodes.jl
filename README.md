@@ -128,12 +128,15 @@ The default proposal is the symmetric SCRIBE-process random walk
 ```
 
 with the matching reversed Gaussian used by GenSMCP3. The mission selects one
-proposal mechanism for the whole run. Two alternatives remain available:
+proposal mechanism for the whole run. Three alternatives remain available:
 
 - pCN supplies prior-reversible correlated movement using the initial SCRIBE
   covariance `P₀`;
 - Langevin uses the target-score gradient and a fixed preconditioner derived
-  from SCRIBE process covariance `Qϕ`.
+  from the initial SCRIBE covariance `P₀`;
+- Gauss–Newton transport moves the existing particle cloud between consecutive
+  observation-conditioned Gaussian approximations and uses the inverse affine
+  map as its GenSMCP3 backward program.
 
 These mechanisms are alternatives, not a mixture. Changing the random-walk
 scale does not change the initial ego-centered prior.
@@ -197,11 +200,24 @@ The first world validation is:
 julia --project=examples examples/world_inf/curl_mmd_multi_trial.jl
 ```
 
-It learns a rank-32 SCRIBE model from ROMS curl snapshots, generates VulcanJ
-trajectories ergodic to absolute scalar vorticity, and performs ten MMD-only
-inference trials spanning nearby through distant observed-agent beliefs. Curl
-is treated as scalar out-of-plane vorticity; fixed-length contour-tangent glyphs
-show circulation orientation without inventing an in-plane curl vector.
+It learns a rank-10 SCRIBE model of normalized absolute-curl shape, generates
+VulcanJ trajectories ergodic to that field, and performs ten MMD-only inference
+trials spanning nearby through distant observed-agent beliefs. The mission uses
+one observation-conditioned Gauss–Newton affine proposal throughout the
+GenSMCP3 run. After resampling, the same Gaussian approximation supplies an
+independence-MH rejuvenation move; this is a resample–move step, not a mixture
+of transport proposals. Curl is treated as
+scalar out-of-plane vorticity; equal-length arrows carry only the direction of
+the ROMS horizontal flow. VulcanJ and Arrodes evaluate the Gaussian kernel in
+the same unit-square domain coordinates. The discrepancy unit is calibrated
+from held-out target fields. The evidence temperature is selected from
+coefficient recovery on nine separate held-out VulcanJ trajectories; none of
+the ten validation worlds participates in calibration. Posterior plots show the
+query-observable EOF world model and its normalized absolute-curl target.
+Coefficient recovery,
+representative particles, and posterior-predictive target recovery answer
+different questions and are displayed together; none is treated as a substitute
+for the others.
 
 The examples run trials sequentially and set BLAS to one thread. Arrodes does
 not run examples during package tests.

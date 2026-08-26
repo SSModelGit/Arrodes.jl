@@ -371,25 +371,79 @@ end
 function plot_world_trial_recovery(trials)
     ordered = trials[sortperm(getindex.(trials, :prior_distance))]
     distance = getindex.(ordered, :prior_distance)
-    panel = plot(
+    recovery = getindex.(ordered, :coefficient_recovery)
+    target = plot(
         distance,
         getindex.(ordered, :initial_discrepancy);
         marker=:circle,
         linewidth=2,
         label="ego prior",
-        xlabel="ego-to-observed distance (prior σ)",
+        xlabel="observed-world distance from ego prior (σ)",
         ylabel="target-measure MMD²",
-        size=(1200, 700),
+        title="Behaviorally visible target recovery",
     )
     plot!(
-        panel,
+        target,
         distance,
         getindex.(ordered, :final_discrepancy);
         marker=:diamond,
         linewidth=2,
-        label="inferred posterior",
+        label="posterior predictive",
     )
-    panel
+    distances = plot(
+        distance,
+        distance;
+        marker=:circle,
+        linewidth=2,
+        label="ego prior error",
+        xlabel="observed-world distance from ego prior (σ)",
+        ylabel="distance to observed coefficients (σ)",
+        title="Coefficient-vector recovery",
+    )
+    plot!(
+        distances,
+        distance,
+        getindex.(recovery, :posterior_distance);
+        marker=:diamond,
+        linewidth=2,
+        label="posterior mean error",
+    )
+    plot!(
+        distances,
+        distance,
+        getindex.(recovery, :representative_distance);
+        marker=:square,
+        linewidth=2,
+        label="posterior representative",
+    )
+    plot!(
+        distances,
+        distance,
+        getindex.(recovery, :nearest_particle_distance);
+        marker=:star5,
+        linewidth=2,
+        label="nearest retained particle",
+    )
+    ratio = plot(
+        distance,
+        getindex.(recovery, :recovery_ratio);
+        marker=:diamond,
+        linewidth=2,
+        label="posterior mean",
+        xlabel="observed-world distance from ego prior (σ)",
+        ylabel="Rϕ",
+        title="Recovery ratio (< 1 improves on the prior)",
+    )
+    plot!(
+        ratio,
+        distance,
+        getindex.(recovery, :representative_recovery_ratio);
+        marker=:square,
+        linewidth=2,
+        label="posterior representative",
+    )
+    hline!(ratio, [1.0]; color=:black, linestyle=:dash, label="prior")
+    plot(target, distances, ratio; layout=(1, 3), size=(2700, 700))
 end
 
 function plot_world_trial_particles(trials, prior_mean, prior_covariance)

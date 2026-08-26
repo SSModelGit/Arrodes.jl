@@ -63,6 +63,91 @@ function world_logtarget_gradient(problem, timestep, coefficients, cache)
     )
 end
 
+function gauss_newton_moments(problem, timestep, proposal, cache)
+    moments = get!(cache, :gauss_newton_moments) do
+        Dict{Int,Dict{Symbol,Any}}()
+    end
+    get!(moments, timestep) do
+        prior_mean = problem.context.model.ϕ
+        prior_covariance = problem.context.prior_covariance
+        timestep == 0 && return Dict(
+            :mean => prior_mean,
+            :covariance => prior_covariance,
+        )
+
+        coefficients = copy(gauss_newton_moments(
+            problem,
+            timestep - 1,
+            proposal,
+            cache,
+        )[:mean])
+        prior_precision = inv(Symmetric(prior_covariance))
+        score = problem.score
+        query_fraction = query_weight(score, timestep)
+        β = score.β_max * maturity(score, timestep)
+        kernel = get!(cache, :target_kernel) do
+            kernel_matrix(
+                score.kernel_bandwidth,
+                problem.context.kernel_locations,
+                problem.context.kernel_locations,
+            )
+        end
+
+        for _ in 1:proposal[:optimizer_steps]
+            jacobian = target_measure_jacobian(problem, coefficients)
+            precision = Matrix(Symmetric(
+                prior_precision +
+                2β * (1 - query_fraction) / score.discrepancy_scale .* (
+                    jacobian' * kernel * jacobian
+                ),
+            ))
+            gradient = world_logtarget_gradient(
+                problem,
+                timestep,
+                coefficients,
+                cache,
+            )
+            direction = precision \ gradient
+            current_score = -0.5dot(
+                coefficients - prior_mean,
+                prior_precision * (coefficients - prior_mean),
+            ) + world_logscore(problem, timestep, coefficients, cache)
+            step = 1.0
+            accepted = false
+            candidate = coefficients
+            while step > 1 / 128
+                candidate = coefficients + step .* direction
+                candidate_score = -0.5dot(
+                    candidate - prior_mean,
+                    prior_precision * (candidate - prior_mean),
+                ) + world_logscore(problem, timestep, candidate, cache)
+                if candidate_score >= current_score
+                    accepted = true
+                    break
+                end
+                step /= 2
+            end
+            accepted || break
+            coefficients .= candidate
+            norm(direction) * step < 1e-6 && break
+        end
+
+        jacobian = target_measure_jacobian(problem, coefficients)
+        precision = Matrix(Symmetric(
+            prior_precision +
+            2β * (1 - query_fraction) / score.discrepancy_scale .* (
+                jacobian' * kernel * jacobian
+            ),
+        ))
+        Dict(
+            :mean => coefficients,
+            :covariance => regularized_covariance(
+                proposal[:covariance_scale] .* inv(Symmetric(precision)),
+            ),
+        )
+    end
+end
+
 function proposal_moments(coefficients, problem, timestep, proposal, cache)
     mechanism = proposal[:mechanism]
     @match mechanism begin
@@ -80,16 +165,14 @@ function proposal_moments(coefficients, problem, timestep, proposal, cache)
                 :mean => problem.context.model.ϕ + correlation .* (
                     coefficients - problem.context.model.ϕ
                 ),
-                :covariance => regularized_covariance(
+                :covariance => Matrix(Symmetric(
                     (1 - correlation^2) .* problem.context.prior_covariance,
-                ),
+                )),
             )
         end
         :langevin => begin
             step = proposal[:langevin_step]
-            preconditioner = regularized_covariance(
-                SCRIBE.eof_process_covariance(problem.context.model),
-            )
+            preconditioner = problem.context.prior_covariance
             gradient = world_logtarget_gradient(
                 problem,
                 timestep,
@@ -98,10 +181,24 @@ function proposal_moments(coefficients, problem, timestep, proposal, cache)
             )
             Dict(
                 :mean => coefficients + 0.5step .* (preconditioner * gradient),
-                :covariance => regularized_covariance(step .* preconditioner),
+                :covariance => step .* preconditioner,
             )
         end
+        :gauss_newton => gauss_newton_moments(
+            problem,
+            timestep,
+            proposal,
+            cache,
+        )
     end
+end
+
+function affine_gaussian_transport(coefficients, old_moments, new_moments)
+    old_factor = cholesky(Symmetric(old_moments[:covariance])).L
+    new_factor = cholesky(Symmetric(new_moments[:covariance])).L
+    new_moments[:mean] + new_factor * (
+        old_factor \ (coefficients - old_moments[:mean])
+    )
 end
 
 @kernel function world_forward(
@@ -111,6 +208,26 @@ end
     timestep::Int,
     proposal::Dict{Symbol,Any},
 )
+    if proposal[:mechanism] == :gauss_newton
+        old_moments = gauss_newton_moments(
+            problem,
+            timestep - 1,
+            proposal,
+            cache,
+        )
+        new_moments = gauss_newton_moments(
+            problem,
+            timestep,
+            proposal,
+            cache,
+        )
+        coefficients = affine_gaussian_transport(
+            previous_trace[:coefficients],
+            old_moments,
+            new_moments,
+        )
+        return Gen.choicemap((:coefficients, coefficients)), Gen.choicemap()
+    end
     old_coefficients = GenTraceKernelDSL.get_undualed(
         previous_trace,
         :coefficients,
@@ -135,6 +252,26 @@ end
     timestep::Int,
     proposal::Dict{Symbol,Any},
 )
+    if proposal[:mechanism] == :gauss_newton
+        old_moments = gauss_newton_moments(
+            problem,
+            timestep - 1,
+            proposal,
+            cache,
+        )
+        new_moments = gauss_newton_moments(
+            problem,
+            timestep,
+            proposal,
+            cache,
+        )
+        coefficients = affine_gaussian_transport(
+            updated_trace[:coefficients],
+            new_moments,
+            old_moments,
+        )
+        return Gen.choicemap((:coefficients, coefficients)), Gen.choicemap()
+    end
     new_coefficients = GenTraceKernelDSL.get_undualed(
         updated_trace,
         :coefficients,
@@ -250,7 +387,7 @@ function infer_world(
             update,
         )
         ess[timestep + 1] = GenParticleFilters.effective_sample_size(state)
-        if timestep < horizon && ess[timestep + 1] < ess_threshold * n_particles
+        if ess[timestep + 1] < ess_threshold * n_particles
             GenParticleFilters.pf_resample!(state, resampling)
             resampled[timestep] = true
             if rejuvenation_steps > 0

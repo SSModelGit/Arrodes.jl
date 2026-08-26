@@ -18,8 +18,8 @@ function calibrate_discrepancy_scale(context, score, coefficient_samples)
     measures = [target_measure(problem, coefficients) for coefficients in coefficient_samples]
     kernel = WorldInference.kernel_matrix(
         score.kernel_bandwidth,
-        context.quadrature,
-        context.quadrature,
+        context.kernel_locations,
+        context.kernel_locations,
     )
     discrepancies = [
         dot(measures[left] - measures[right], kernel * (measures[left] - measures[right]))

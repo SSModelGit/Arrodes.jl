@@ -1,3 +1,9 @@
+using Arrodes
+using LinearAlgebra
+using Random
+using SCRIBE
+using Test
+
 function toy_world_problem()
     locations = [0.0 0.0; 1.0 0.0; 0.0 1.0; 1.0 1.0]
     snapshots = [
@@ -82,6 +88,7 @@ end
         right_moments[:mean],
         right_moments[:covariance],
     )
+
 end
 
 @testset "world inference from a toy ergodic trajectory" begin
@@ -92,6 +99,12 @@ end
         n_particles=128,
         ess_threshold=0.65,
         rejuvenation_steps=1,
+        proposal=Dict{Symbol,Any}(
+            :mechanism => :gauss_newton,
+            :covariance_scale => 1.0,
+            :optimizer_steps => 8,
+        ),
+        check_inverses=true,
         rng=MersenneTwister(18),
     )
     posterior = world_posterior(result)
@@ -99,7 +112,7 @@ end
     cache = Dict{Symbol,Any}()
     @test target_measure_mmd(
         problem,
-        posterior[:coefficient_mean],
+        result,
         truth,
         cache,
     ) < target_measure_mmd(

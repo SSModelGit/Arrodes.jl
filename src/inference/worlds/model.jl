@@ -2,6 +2,7 @@
     model::SCRIBE.EOFClimateModel
     prior_covariance::Matrix{Float64}
     quadrature::Matrix{Float64}
+    kernel_locations::Matrix{Float64}
     quadrature_weights::Vector{Float64}
     quadrature_mean::Vector{Float64}
     quadrature_basis::Matrix{Float64}
@@ -55,6 +56,7 @@ function world_inference_context(
     model::SCRIBE.EOFClimateModel;
     prior_covariance::AbstractMatrix=SCRIBE.eof_prior_covariance(model),
     quadrature::AbstractMatrix=model.params.locations,
+    kernel_locations::AbstractMatrix=quadrature,
     quadrature_weights::AbstractVector=model.params.decomposition.weights,
 )
     covariance = Matrix{Float64}(prior_covariance)
@@ -64,6 +66,8 @@ function world_inference_context(
     cholesky(Symmetric(covariance); check=true)
     size(quadrature, 1) == length(quadrature_weights) ||
         error("Quadrature locations and weights must have the same length")
+    size(kernel_locations) == size(quadrature) ||
+        error("Kernel locations must match the quadrature locations")
     weights = Float64.(quadrature_weights)
     all(isfinite, weights) && all(>=(0), weights) && sum(weights) > 0 ||
         error("Quadrature weights must define finite, nonnegative probability mass")
@@ -72,6 +76,7 @@ function world_inference_context(
         model=model,
         prior_covariance=covariance,
         quadrature=Matrix{Float64}(quadrature),
+        kernel_locations=Matrix{Float64}(kernel_locations),
         quadrature_weights=weights,
         quadrature_mean=Vector{Float64}(SCRIBE.eof_mean_at(model, quadrature)),
         quadrature_basis=Matrix{Float64}(SCRIBE.eof_basis_at(model, quadrature)),
