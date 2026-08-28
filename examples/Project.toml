@@ -21,5 +21,14 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 VulcanJ = "4dff405b-345f-4980-ad9a-8a8da005ecf3"
 cuDNN = "02a925ec-e4fe-4b08-9a7e-0d78e3d38ccd"
 
+[sources]
+Arrodes = {path = ".."}
+DynamicForwardDiff = {url = "https://github.com/probcomp/DynamicForwardDiff.jl", rev = "main"}
+GenSMCP3 = {url = "https://github.com/probcomp/GenSMCP3.jl", rev = "main"}
+GenTraceKernelDSL = {url = "https://github.com/probcomp/GenTraceKernelDSL.jl", rev = "main"}
+MuKumari = {path = "../../MuKumari"}
+SCRIBE = {path = "../../SCRIBE"}
+VulcanJ = {path = "../../VulcanJ"}
+
 [compat]
 OpenSSL_jll = "~3.0"

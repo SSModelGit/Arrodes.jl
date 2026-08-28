@@ -5,3 +5,12 @@ POMDPs = "a93abf59-7444-517b-a68a-c42f96afdd7d"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SCRIBE = "9d033a4c-5281-4799-847b-6fce4a2de302"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[sources]
+Arrodes = {path = ".."}
+DynamicForwardDiff = {url = "https://github.com/probcomp/DynamicForwardDiff.jl", rev = "main"}
+GenSMCP3 = {url = "https://github.com/probcomp/GenSMCP3.jl", rev = "main"}
+GenTraceKernelDSL = {url = "https://github.com/probcomp/GenTraceKernelDSL.jl", rev = "main"}
+MuKumari = {path = "../../MuKumari"}
+SCRIBE = {path = "../../SCRIBE"}
+VulcanJ = {path = "../../VulcanJ"}

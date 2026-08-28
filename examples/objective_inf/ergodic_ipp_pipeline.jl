@@ -10,6 +10,9 @@ using Random
 using SpecialFunctions: erf
 using VulcanJ
 
+VulcanJ.extract_location(state::KAgentState) =
+    reshape(Float64.(state.x), 1, :)
+
 BLAS.set_num_threads(1)
 
 # A mixed-planner inverse-planning example based on VulcanJ's
