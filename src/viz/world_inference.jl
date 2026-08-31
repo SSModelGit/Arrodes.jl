@@ -256,12 +256,14 @@ function plot_world_particle_health(
     truth,
     prior_mean,
     prior_covariance,
+    diagnostics,
 )
-    history = world_inference_history(problem, result, truth)
-    timesteps = getindex.(history, :timestep)
+    horizon = length(diagnostics[:behavioral_mmd])
+    timesteps = 1:horizon
+
     ess = plot(
         timesteps,
-        getindex.(history, :ess);
+        view(diagnostics[:ess_history], 2:(horizon + 1));
         linewidth=2,
         label=false,
         xlabel="observed locations",
@@ -270,7 +272,7 @@ function plot_world_particle_health(
     )
     spread = plot(
         timesteps,
-        [sqrt(tr(step[:covariance])) for step in history];
+        diagnostics[:coefficient_spread];
         linewidth=2,
         label=false,
         xlabel="observed locations",
@@ -279,7 +281,7 @@ function plot_world_particle_health(
     )
     recovery = plot(
         timesteps,
-        getindex.(history, :discrepancy);
+        diagnostics[:behavioral_mmd];
         linewidth=2,
         label=false,
         xlabel="observed locations",
@@ -305,6 +307,7 @@ function save_world_inference_visualizations(
     prior_mean,
     prior_covariance,
     field_plot;
+    diagnostics,
     frame_count=80,
     fps=8,
 )
@@ -345,6 +348,7 @@ function save_world_inference_visualizations(
             truth,
             prior_mean,
             prior_covariance,
+            diagnostics,
         ),
         joinpath(output, "particle_health.png"),
     )

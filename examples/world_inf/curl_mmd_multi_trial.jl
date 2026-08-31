@@ -1,11 +1,12 @@
 using Arrodes
 using JSON3
-using LinearAlgebra
+using LinearAlgebra: Symmetric, Diagonal, cholesky, norm, dot, tr, BLAS
 using Plots
-using Random
+using Random: MersenneTwister
 using SCRIBE
 using SCRIBE.ROMSTools
-using Statistics
+using SCRIBE.ROMSTools: prepare_roms_curl_shape, read_roms_flow_directions
+using Statistics: mean, median
 using VulcanJ
 
 BLAS.set_num_threads(1)
@@ -15,25 +16,332 @@ function normalized_curl_target(field, weights, floor)
     density ./ dot(weights, density)
 end
 
-function coefficient_recovery(result, truth, prior, prior_covariance)
+function elapsed_observation_times(obs_locs, agent_speed)
+    elapsed = zeros(Float64, size(obs_locs, 1))
+    for ts in 2:size(obs_locs, 1)
+        dist = norm(view(obs_locs, ts, :) - view(obs_locs, ts - 1, :))
+        elapsed[ts] = elapsed[ts - 1] + dist / agent_speed
+    end
+    return elapsed
+end
+
+weighted_rmse(e,t,W) = let err=e-t; sqrt(dot(err, Diagonal(W), err) / sum(W)); end
+
+function posterior_target_field(
+    model, particles::AbstractMatrix, pweights::AbstractVector,
+    sweights::AbstractVector, target_floor::Real,
+)
+    inferred_target = zeros(eltype(pweights), length(sweights))
+    for pindex in axes(particles, 2)
+        pfield = SCRIBE.reconstruct_eof_field(
+            model; coefficients=view(particles, :, pindex),
+        )
+        inferred_target .+= pweights[pindex] .* normalized_curl_target(
+            pfield, sweights, target_floor,
+        )
+    end
+
+    return inferred_target
+end
+
+function construct_world_recovery_diagnostics_cache(
+    problem, observed, target_floor::Real, n_particles; top_count=10
+)
+    model = problem.context.model
+    spatial_weights = model.params.decomposition.weights
+    truth_field = observed[:field]
+    truth_coefficients = observed[:coefficients]
+    truth_target_field = normalized_curl_target(
+        truth_field, spatial_weights, target_floor
+    )
+
+    p_count = min(top_count, n_particles)
+    horizon = length(problem.observations)
+
+    # rmse/mmd plot diagnostics
+    world_rmse = fill(NaN, p_count, horizon)
+    target_rmse = fill(NaN, p_count, horizon)
+    particle_mmd = fill(NaN, p_count, horizon)
+
+    posterior_world_rmse = fill(NaN, horizon)
+    posterior_target_rmse = fill(NaN, horizon)
+    posterior_mmd = fill(NaN, horizon)
+
+    # ess/p-health diagnostics
+    behavioral_mmd = fill(NaN, horizon)
+    ess_hist = fill(NaN, horizon+1)
+    coeff_spread = fill(NaN, horizon)
+    resampled = falses(horizon)
+
+    mmd_cache = Dict{Symbol,Any}()
+    callbacks = Dict{Symbol,Any}()
+
+    diagnostics = Dict{Symbol, Any}(
+        :callbacks => callbacks,
+
+        :world_rmse => world_rmse,
+        :target_rmse => target_rmse,
+        :particle_mmd => particle_mmd,
+
+        :posterior_world_rmse => posterior_world_rmse,
+        :posterior_target_rmse => posterior_target_rmse,
+        :posterior_mmd => posterior_mmd,
+
+        :behavioral_mmd => behavioral_mmd,
+        :ess_history => ess_hist,
+        :coefficient_spread => coeff_spread,
+        :resampled => resampled,
+    )
+
+    callbacks[:post_initialization] = filt_state -> begin
+        ess_hist[1] = filt_state[:ess]
+    end
+
+    callbacks[:post_update] = filt_state -> begin
+        timestep = filt_state[:timestep]
+        particles = filt_state[:particles]
+        pweights = filt_state[:weights]
+
+        ess_hist[timestep + 1] = filt_state[:ess]
+
+        ranking = partialsortperm(pweights, 1:p_count; rev=true)
+        ranked_indices = view(ranking, 1:p_count)
+        for (rank, pindex) in enumerate(ranked_indices)
+            coefficients = view(particles, :, pindex)
+            field = SCRIBE.reconstruct_eof_field(
+                problem.context.model; coefficients=coefficients,
+            )
+            target_field = normalized_curl_target(
+                field, spatial_weights, target_floor,
+            )
+
+            world_rmse[rank, timestep] = weighted_rmse(field, truth_field, spatial_weights)
+            target_rmse[rank, timestep] = weighted_rmse(target_field, truth_target_field, spatial_weights)            
+            particle_mmd[rank, timestep] = target_measure_mmd(
+                problem, coefficients, observed[:coefficients], mmd_cache
+            )
+        end
+
+        posterior_field = SCRIBE.reconstruct_eof_field(
+            model; coefficients=filt_state[:coefficient_mean],
+        )
+        posterior_world_rmse[timestep] = weighted_rmse(
+            posterior_field, truth_field, spatial_weights
+        )
+
+        inferred_target = posterior_target_field(
+            model, particles, pweights, spatial_weights, target_floor
+        )
+        posterior_target_rmse[timestep] = weighted_rmse(
+            inferred_target, truth_target_field, spatial_weights
+        )
+        posterior_mmd[timestep] = target_measure_mmd(
+            problem, particles, pweights,
+            truth_coefficients, mmd_cache,
+        )
+    end
+
+    callbacks[:post_resampling] = filt_state -> begin
+        resampled[filt_state[:timestep]] = true
+    end
+
+    callbacks[:post_timestep] = filt_state -> begin
+        behavioral_mmd[filt_state[:timestep]] = target_measure_mmd(
+            problem, filt_state[:coefficient_mean],
+            observed[:coefficients], mmd_cache,
+        )
+        coeff_spread[filt_state[:timestep]] = sqrt(tr(
+            filt_state[:coefficient_covariance]
+        ))
+    end
+
+    callbacks[:post_inference] = filt_state -> begin
+        timestep = filt_state[:timestep]
+        posterior = filt_state[:coefficient_mean]
+        posterior_covariance = filt_state[:coefficient_covariance]
+        particles = filt_state[:particles]
+        pweights = filt_state[:weights]
+
+        model = problem.context.model
+
+        diagnostics[:coefficient_recovery] = coefficient_recovery(
+            posterior, posterior_covariance, particles, pweights,
+            observed[:coefficients], model.ϕ,
+            problem.context.prior_covariance,
+        )
+
+        diagnostics[:inferred_coefficients] = posterior
+        diagnostics[:inferred_field] = SCRIBE.reconstruct_eof_field(
+            model; coefficients=posterior,
+        )
+        diagnostics[:inferred_target_field] = posterior_target_field(
+            model, particles, pweights, spatial_weights, target_floor
+        )
+
+        diagnostics[:final_discrepancy] = target_measure_mmd(
+            problem, particles, pweights, truth_coefficients, mmd_cache
+        )
+        diagnostics[
+            :posterior_predictive_trajectory_discrepancy
+        ] = kernel_discrepancy(
+            problem, timestep, particles, pweights, mmd_cache,
+        )
+    end
+
+    return diagnostics
+end
+
+function ranked_series_plot(times, values; title, ylabel, show_legend)
+    count = size(values, 1)
+    colors = [
+        "#000000", "#303030", "#484848", "#606060", "#787878",
+        "#909090", "#a0a0a0", "#b0b0b0", "#c0c0c0", "#d0d0d0",
+    ]
+    panel = plot(; xlabel="Elapsed Time (s)", ylabel, title)
+
+    for rank in count:-1:1
+        alpha = count == 1 ? 1.0 : 1.0-0.7*(rank-1) / (count-1)
+        plot!(
+            panel, times, view(values, rank, :);
+            color=colors[min(rank, length(colors))],
+            linealpha=alpha,linewidth=(rank==1 ? 2.6 : 1.6),
+            marker=:star5, markersize=(rank==1 ? 3.5 : 2.5),
+            markeralpha=alpha, markerstrokewidth=0, label="Rank $rank",
+            legend=show_legend ? :topright : false
+        )
+    end
+    return panel
+end
+
+function ranked_posterior_series_plot(
+    times, ranked_history, posterior_history;
+    title, ylabel, posterior_label, show_legend
+)
+    panel = ranked_series_plot(
+        times, ranked_history;
+        title=title, ylabel=ylabel, show_legend=show_legend
+    )
+    plot!(
+        panel, times, posterior_history;
+        color=:red, linewidth=2.8,
+        marker=:star5, markersize=5, markerstrokewidth=0,
+        label=posterior_label, legend=show_legend ? :topright : false
+    )
+
+    return panel
+end
+
+function plot_world_recovery_over_time(trial)
+    elapsed_times = trial[:elapsed_times]
+    diagnostics = trial[:recovery_diagnostics]
+
+    world_panel = ranked_posterior_series_plot(
+        elapsed_times, diagnostics[:world_rmse],
+        diagnostics[:posterior_world_rmse];
+        title="World-model average RMSE",
+        ylabel="Spatially weighted average field RMSE",
+        posterior_label="Posterior expected field",
+        show_legend=true
+    )
+    target_panel = ranked_posterior_series_plot(
+        elapsed_times, diagnostics[:target_rmse],
+        diagnostics[:posterior_target_rmse];
+        title="Inferred target-field weighted RMSE",
+        ylabel="Spatially weighted target field RMSE",
+        posterior_label="Posterior expected target",
+        show_legend=true
+    )
+
+    behavioral_mmd_panel = plot(
+        elapsed_times, diagnostics[:behavioral_mmd];
+        color=:black, linewidth=2.6, marker=:star5, markersize=3.5,
+        markerstrokewidth=0, label=false, xlabel="Elapsed Time (s)",
+        ylabel="target-measure MMD²",
+        title="Target behavior's kernel discrepancy measure over time"
+    )
+    particle_mmd_panel = ranked_posterior_series_plot(
+        elapsed_times,
+        diagnostics[:particle_mmd], diagnostics[:posterior_mmd];
+        title="Kernel discrepancy measure of inferred behavior over time",
+        ylabel="Target-measure MMD²",
+        posterior_label="Posterior mixture",
+        show_legend=true
+    )
+
+    plot(world_panel, target_panel,
+         behavioral_mmd_panel, particle_mmd_panel;
+         layout=(2, 2), size=(1700, 1150), titlefontsize=16,
+         plot_title="Trial $(trial[:trial]) world-model recovery over elapsed time"
+   )
+end
+
+function plot_ten_trial_rmse_histories(trials)
+    ordered_trials = sort(trials; by=trial -> trial[:trial])
+    panels = Any[]
+
+    for trial in ordered_trials
+        elapsed_times = trial[:elapsed_times]
+        diagnostics = trial[:recovery_diagnostics]
+        trial_number = trial[:trial]
+
+        show_legend = trial_number == 1
+
+        world_panel = ranked_posterior_series_plot(
+            elapsed_times, diagnostics[:world_rmse],
+            diagnostics[:posterior_world_rmse];
+            title="Trial $trial_number: inferred field RMSE",
+            ylabel="Weighted field RMSE",
+            posterior_label="Posterior expected field",
+            show_legend=show_legend
+        )
+
+        target_panel = ranked_posterior_series_plot(
+            elapsed_times, diagnostics[:target_rmse],
+            diagnostics[:posterior_target_rmse];
+            title="Trial $trial_number: inferred target field RMSE",
+            ylabel="Weighted target field RMSE",
+            posterior_label="Posterior expected target",
+            show_legend=show_legend
+        )
+
+        push!(panels, world_panel, target_panel)
+    end
+
+    return plot(
+        panels...;
+        layout=(5,4),
+        size=(3600, 2500),
+        titlefontsize=11,
+        plot_titlefontsize=20,
+        plot_title=(
+            "Spatially weighted field and target-field recovery " *
+            "across ten trials"
+        )
+    )
+end
+
+function coefficient_recovery(
+    posterior, posterior_covariance, particles, weights,
+    truth, prior, prior_covariance,
+)
     prior_factor = cholesky(Symmetric(prior_covariance)).L
     prior_distance = norm(prior_factor \ (prior - truth))
-    posterior = result.coefficient_means[:, end]
     posterior_distance = norm(prior_factor \ (posterior - truth))
     posterior_difference = posterior - truth
+
     posterior_standardized_distance = sqrt(dot(
         posterior_difference,
-        result.coefficient_covariances[end] \ posterior_difference,
+        posterior_covariance \ posterior_difference,
     ))
     particle_distances = [
-        norm(prior_factor \ (view(result.final_particles, :, index) - truth))
-        for index in axes(result.final_particles, 2)
+        norm(prior_factor \ (view(particles, :, index) - truth))
+        for index in axes(particles, 2)
     ]
     representative_index = argmin([
         norm(prior_factor \ (
-            view(result.final_particles, :, index) - posterior
+            view(particles, :, index) - posterior
         ))
-        for index in axes(result.final_particles, 2)
+        for index in axes(particles, 2)
     ])
     representative_distance = particle_distances[representative_index]
     coefficient_error = posterior - truth
@@ -55,11 +363,11 @@ function coefficient_recovery(result, truth, prior, prior_covariance)
             max(prior_distance, eps(Float64)),
         :nearest_particle_distance => minimum(particle_distances),
         :weighted_particle_distance => dot(
-            result.final_weights,
+            weights,
             particle_distances,
         ),
         :mass_within_one_sigma => dot(
-            result.final_weights,
+            weights,
             particle_distances .<= 1.0,
         ),
         :sign_agreement => mean(sign.(posterior) .== sign.(truth)),
@@ -129,7 +437,7 @@ function ergodic_trajectory(mission, scenario, score, coefficients)
         momentum=0.85,
         control_weight=2e-3,
         boundary_weight=20.0,
-        max_speed=1 / 16,
+        max_speed=mission[:trajectory][:agent_speed],
         line_search_steps=8,
         line_search_decay=0.5,
     )
@@ -150,6 +458,9 @@ function ergodic_trajectory(mission, scenario, score, coefficients)
                    for site in eachrow(scenario[:context].quadrature))
             for point in eachrow(points)
         ],
+        :elapsed_times => elapsed_observation_times(
+            points, mission[:trajectory][:agent_speed],
+        ),
     )
 end
 
@@ -207,20 +518,23 @@ function run_trial(
         score=score,
         observations=trajectory[:observations],
     )
+    recovery_diagnostics = construct_world_recovery_diagnostics_cache(
+        problem,
+        observed,
+        scenario[:target_floor],
+        mission[:filter][:particles];
+        top_count=10,
+    )
     result = infer_world(
         problem;
         n_particles=mission[:filter][:particles],
         ess_threshold=mission[:filter][:ess_threshold],
         rejuvenation_steps=mission[:filter][:rejuvenation_steps],
+        diagnostics=recovery_diagnostics[:callbacks],
         proposal,
         rng=MersenneTwister(seed + 1),
     )
-    recovery = coefficient_recovery(
-        result,
-        observed[:coefficients],
-        scenario[:context].model.ϕ,
-        scenario[:context].prior_covariance,
-    )
+    recovery = recovery_diagnostics[:coefficient_recovery]
     design = world
     inferred_coefficients = result.coefficient_means[:, end]
     inferred_field = SCRIBE.reconstruct_eof_field(
@@ -265,7 +579,7 @@ function run_trial(
         "  final trajectory MMD²: prior=$(round(trajectory_discrepancy[:prior]; sigdigits=4)), " *
         "observed=$(round(trajectory_discrepancy[:observed]; sigdigits=4)), " *
         "posterior predictive=$(round(trajectory_discrepancy[:posterior_predictive]; sigdigits=4)); " *
-        "minimum ESS=$(round(minimum(result.ess_history); digits=1))",
+        "minimum ESS=$(round(minimum(recovery_diagnostics[:ess_history]); digits=1))",
     )
     println(
         "  coefficient recovery: requested=$(design[:requested_distance])σ, " *
@@ -307,6 +621,8 @@ function run_trial(
         :flow_directions => flow_directions,
         :problem => problem,
         :result => result,
+        :elapsed_times => trajectory[:elapsed_times],
+        :recovery_diagnostics => recovery_diagnostics,
         :trajectory => wet_grid_locations(
             scenario[:roms],
             scenario[:quadrature_rows][trajectory[:site_indices]],
@@ -395,9 +711,9 @@ function save_results(mission, scenario, trials)
                 "prior_trajectory_mmd2" => trial[:trajectory_discrepancy][:prior],
                 "observed_trajectory_mmd2" => trial[:trajectory_discrepancy][:observed],
                 "posterior_predictive_trajectory_mmd2" => trial[:trajectory_discrepancy][:posterior_predictive],
-                "minimum_ess" => minimum(trial[:result].ess_history),
-                "median_ess" => median(trial[:result].ess_history),
-                "resampling_steps" => count(trial[:result].resampled),
+                "minimum_ess" => minimum(trial[:recovery_diagnostics][:ess_history]),
+                "median_ess" => median(trial[:recovery_diagnostics][:ess_history]),
+                "resampling_steps" => count(trial[:recovery_diagnostics][:resampled]),
             ),
             Dict(
                 String(key) => value
@@ -431,6 +747,10 @@ function save_results(mission, scenario, trials)
         scenario[:roms],
         mission[:visualization][:arrow_stride],
     )
+    savefig(
+        plot_ten_trial_rmse_histories(trials),
+        joinpath(output, "weighted_rmse_over_time_across_ten_trials.png"),
+    )
     for trial in trials
         trial_output = joinpath(
             output,
@@ -457,8 +777,13 @@ function save_results(mission, scenario, trials)
             scenario[:context].model.ϕ,
             scenario[:context].prior_covariance,
             field_plot;
+            diagnostics=trial[:recovery_diagnostics],
             frame_count=mission[:visualization][:animation_frames],
             fps=mission[:visualization][:fps],
+        )
+        savefig(
+            plot_world_recovery_over_time(trial),
+            joinpath(trial_output, "recovery_over_time.png"),
         )
         target_limit = max(
             maximum(trial[:truth_target_field]),
@@ -586,6 +911,7 @@ function prepare_mission(mission_path)
         :metric_minima => minima,
         :metric_spans => spans,
         :field_scale => fitted[:field_scale],
+        :target_floor => mission[:target][:floor_fraction] * fitted[:field_scale],
         :calibration_coefficients => [
             SCRIBE.eof_coefficients(params, roms[:data][:, snapshot])
             for snapshot in calibration_ids
@@ -593,10 +919,9 @@ function prepare_mission(mission_path)
     )
     target = eof_target_field(
         link=:magnitude,
-        floor=mission[:target][:floor_fraction] * scenario[:field_scale],
+        floor=scenario[:target_floor],
         name=:absolute_curl,
     )
-    scenario[:target_floor] = mission[:target][:floor_fraction] * scenario[:field_scale]
     template = eof_field_score(
         target;
         kernel_bandwidth=scenario[:kernel_bandwidth],

@@ -27,7 +27,8 @@
   },
   "trajectory": {
     "samples": 100,
-    "ergodic_iterations": 180
+    "ergodic_iterations": 180,
+    "agent_speed": 0.0625
   },
   "filter": {
     "particles": 512,

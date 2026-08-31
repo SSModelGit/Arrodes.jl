@@ -327,6 +327,36 @@ function particle_moments(state)
     )
 end
 
+function run_world_diagnostics!(
+    diagnostics::AbstractDict{Symbol},
+    event::Symbol,
+    state, problem, timestep;
+    ess, resampled=false, moments=nothing
+)
+    configured = get(diagnostics, event, nothing)
+    if isnothing(configured); return nothing; end
+    callbacks = configured isa Function ? (configured,) : configured
+    if isempty(callbacks); return nothing; end
+
+    snapshot = isnothing(moments) ? particle_moments(state) : moments
+    let payload = Dict{Symbol, Any}(
+        :event => event,
+        :timestep => timestep,
+        :problem => problem,
+        :particles => snapshot[:particles],
+        :weights => snapshot[:weights],
+        :coefficient_mean => snapshot[:mean],
+        :coefficient_covariance => snapshot[:covariance],
+        :ess => Float64(ess),
+        :resampled => Bool(resampled),
+    )
+        for callback in callbacks
+            callback(payload)
+        end
+    end
+    return nothing
+end
+
 function world_mh(trace, problem, cache, timestep, proposal, rng)
     proposed, log_acceptance = GenTraceKernelDSL.run_mcmc_kernel(
         trace,
@@ -342,6 +372,7 @@ function infer_world(
     ess_threshold::Float64=0.5,
     resampling::Symbol=:residual,
     rejuvenation_steps::Int=1,
+    diagnostics::AbstractDict{Symbol}=Dict{Symbol,Any}(),
     proposal::Dict{Symbol,Any}=default_world_proposal(),
     check_inverses::Bool=false,
     rng::AbstractRNG=Random.default_rng(),
@@ -366,6 +397,10 @@ function infer_world(
     means[:, 1] = moments[:mean]
     covariances[1] = moments[:covariance]
     ess[1] = GenParticleFilters.effective_sample_size(state)
+    run_world_diagnostics!(
+        diagnostics, :post_initialization, state, problem, 0;
+        ess=ess[1], moments=moments,
+    )
 
     for timestep in 1:horizon
         update = GenSMCP3.SMCP3Update(
@@ -387,9 +422,21 @@ function infer_world(
             update,
         )
         ess[timestep + 1] = GenParticleFilters.effective_sample_size(state)
+        run_world_diagnostics!(
+            diagnostics, :post_update, state, problem, timestep;
+            ess=ess[timestep + 1],
+        )
+
         if ess[timestep + 1] < ess_threshold * n_particles
             GenParticleFilters.pf_resample!(state, resampling)
             resampled[timestep] = true
+
+            run_world_diagnostics!(
+                diagnostics, :post_resampling, state, problem, timestep;
+                ess=GenParticleFilters.effective_sample_size(state),
+                resampled=true,
+            )
+
             if rejuvenation_steps > 0
                 move = (trace, problem, cache, timestep, proposal) ->
                     world_mh(
@@ -406,14 +453,36 @@ function infer_world(
                     (problem, cache, timestep, proposal),
                     rejuvenation_steps,
                 )
+
+                run_world_diagnostics!(
+                    diagnostics, :post_rejuvenation,
+                    state, problem, timestep;
+                    ess=GenParticleFilters.effective_sample_size(state),
+                    resampled=true,
+                )
             end
         end
         moments = particle_moments(state)
         means[:, timestep + 1] = moments[:mean]
         covariances[timestep + 1] = moments[:covariance]
+
+        run_world_diagnostics!(
+            diagnostics, :post_timestep, state, problem, timestep;
+            ess=GenParticleFilters.effective_sample_size(state),
+            resampled=resampled[timestep],
+            moments=moments,
+        )
+
     end
 
     final = particle_moments(state)
+
+    run_world_diagnostics!(
+        diagnostics, :post_inference, state, problem, horizon;
+        ess=GenParticleFilters.effective_sample_size(state),
+        moments=final,
+    )
+
     WorldInferenceResult(
         model=problem.context.model,
         coefficient_means=means,

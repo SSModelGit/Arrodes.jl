@@ -74,15 +74,36 @@ function target_measure_mmd(
     )
 end
 
-function posterior_target_measure(problem, result::WorldInferenceResult)
+function posterior_target_measure(problem, particles, weights)
     posterior = zeros(size(problem.context.quadrature, 1))
-    for index in axes(result.final_particles, 2)
-        posterior .+= result.final_weights[index] .* target_measure(
+    for index in axes(particles, 2)
+        posterior .+= weights[index] .* target_measure(
             problem,
-            view(result.final_particles, :, index),
+            view(particles, :, index),
         )
     end
     posterior
+end
+
+function posterior_target_measure(problem, result::WorldInferenceResult)
+    posterior_target_measure(
+        problem,
+        result.final_particles,
+        result.final_weights,
+    )
+end
+
+function target_measure_mmd(
+    problem,
+    particles::AbstractMatrix, weights::AbstractVector, coefficients,
+    cache=Dict{Symbol,Any}(),
+)
+    measure_mmd(
+        problem,
+        posterior_target_measure(problem, particles, weights),
+        target_measure(problem, coefficients),
+        cache,
+    )
 end
 
 function target_measure_mmd(
@@ -172,6 +193,19 @@ function kernel_discrepancy(problem, timestep, coefficients, cache=Dict{Symbol,A
         problem,
         timestep,
         target_measure(problem, coefficients),
+        cache,
+    )
+end
+
+function kernel_discrepancy(
+    problem, timestep,
+    particles::AbstractMatrix, weights::AbstractVector,
+    cache=Dict{Symbol,Any}(),
+)
+    measure_discrepancy(
+        problem,
+        timestep,
+        posterior_target_measure(problem, particles, weights),
         cache,
     )
 end
