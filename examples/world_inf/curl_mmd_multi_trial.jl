@@ -16,6 +16,9 @@ function normalized_curl_target(field, weights, floor)
     density ./ dot(weights, density)
 end
 
+nonnegative_curl_target(field, weights, floor) = nonnegative_curl_target(field, floor)
+nonnegative_curl_target(field, floor) = abs.(field) .+ floor
+
 function elapsed_observation_times(obs_locs, agent_speed)
     elapsed = zeros(Float64, size(obs_locs, 1))
     for ts in 2:size(obs_locs, 1)
@@ -36,7 +39,7 @@ function posterior_target_field(
         pfield = SCRIBE.reconstruct_eof_field(
             model; coefficients=view(particles, :, pindex),
         )
-        inferred_target .+= pweights[pindex] .* normalized_curl_target(
+        inferred_target .+= pweights[pindex] .* nonnegative_curl_target(
             pfield, sweights, target_floor,
         )
     end
@@ -51,7 +54,7 @@ function construct_world_recovery_diagnostics_cache(
     spatial_weights = model.params.decomposition.weights
     truth_field = observed[:field]
     truth_coefficients = observed[:coefficients]
-    truth_target_field = normalized_curl_target(
+    truth_target_field = nonnegative_curl_target(
         truth_field, spatial_weights, target_floor
     )
 
@@ -111,7 +114,7 @@ function construct_world_recovery_diagnostics_cache(
             field = SCRIBE.reconstruct_eof_field(
                 problem.context.model; coefficients=coefficients,
             )
-            target_field = normalized_curl_target(
+            target_field = nonnegative_curl_target(
                 field, spatial_weights, target_floor,
             )
 
@@ -171,12 +174,25 @@ function construct_world_recovery_diagnostics_cache(
         )
 
         diagnostics[:inferred_coefficients] = posterior
-        diagnostics[:inferred_field] = SCRIBE.reconstruct_eof_field(
+        prior_field = SCRIBE.reconstruct_eof_field(
+            model; coefficients=model.ϕ,
+        )
+        post_field = SCRIBE.reconstruct_eof_field(
             model; coefficients=posterior,
         )
-        diagnostics[:inferred_target_field] = posterior_target_field(
+        prior_target_field = nonnegative_curl_target(
+            prior_field, spatial_weights, target_floor
+        )
+        post_target_field = posterior_target_field(
             model, particles, pweights, spatial_weights, target_floor
         )
+
+        diagnostics[:inferred_field] = post_field
+        diagnostics[:inferred_target_field] = post_target_field
+        diagnostics[:prior_field_rmse] = weighted_rmse(prior_field, truth_field, spatial_weights)
+        diagnostics[:posterior_field_rmse] = weighted_rmse(post_field, truth_field, spatial_weights)
+        diagnostics[:prior_target_field_rmse] = weighted_rmse(prior_target_field, truth_target_field, spatial_weights)
+        diagnostics[:posterior_target_field_rmse] = weighted_rmse(post_target_field, truth_target_field, spatial_weights)
 
         diagnostics[:final_discrepancy] = target_measure_mmd(
             problem, particles, pweights, truth_coefficients, mmd_cache
@@ -542,7 +558,7 @@ function run_trial(
         coefficients=inferred_coefficients,
     )
     full_weights = result.model.params.decomposition.weights
-    truth_target_field = normalized_curl_target(
+    truth_target_field = nonnegative_curl_target(
         observed[:field],
         full_weights,
         scenario[:target_floor],
@@ -553,7 +569,7 @@ function run_trial(
             result.model;
             coefficients=view(result.final_particles, :, index),
         )
-        inferred_target_field .+= result.final_weights[index] .* normalized_curl_target(
+        inferred_target_field .+= result.final_weights[index] .* nonnegative_curl_target(
             particle_field,
             full_weights,
             scenario[:target_floor],
@@ -714,6 +730,10 @@ function save_results(mission, scenario, trials)
                 "minimum_ess" => minimum(trial[:recovery_diagnostics][:ess_history]),
                 "median_ess" => median(trial[:recovery_diagnostics][:ess_history]),
                 "resampling_steps" => count(trial[:recovery_diagnostics][:resampled]),
+                "prior_field_rmse" => trial[:recovery_diagnostics][:prior_field_rmse],
+                "posterior_field_rmse" => trial[:recovery_diagnostics][:posterior_field_rmse],
+                "prior_target_field_rmse" => trial[:recovery_diagnostics][:prior_target_field_rmse],
+                "posterior_target_field_rmse" => trial[:recovery_diagnostics][:posterior_target_field_rmse],
             ),
             Dict(
                 String(key) => value

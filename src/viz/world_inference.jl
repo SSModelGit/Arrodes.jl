@@ -373,81 +373,46 @@ function save_world_inference_visualizations(
 end
 
 function plot_world_trial_recovery(trials)
-    ordered = trials[sortperm(getindex.(trials, :prior_distance))]
-    distance = getindex.(ordered, :prior_distance)
-    recovery = getindex.(ordered, :coefficient_recovery)
-    target = plot(
-        distance,
-        getindex.(ordered, :initial_discrepancy);
-        marker=:circle,
-        linewidth=2,
-        label="ego prior",
-        xlabel="observed-world distance from ego prior (σ)",
-        ylabel="target-measure MMD²",
-        title="Behaviorally visible target recovery",
-    )
-    plot!(
-        target,
-        distance,
-        getindex.(ordered, :final_discrepancy);
-        marker=:diamond,
-        linewidth=2,
-        label="posterior predictive",
-    )
-    distances = plot(
-        distance,
-        distance;
-        marker=:circle,
-        linewidth=2,
-        label="ego prior error",
-        xlabel="observed-world distance from ego prior (σ)",
-        ylabel="distance to observed coefficients (σ)",
-        title="Coefficient-vector recovery",
-    )
-    plot!(
-        distances,
-        distance,
-        getindex.(recovery, :posterior_distance);
-        marker=:diamond,
-        linewidth=2,
-        label="posterior mean error",
-    )
-    plot!(
-        distances,
-        distance,
-        getindex.(recovery, :representative_distance);
-        marker=:square,
-        linewidth=2,
-        label="posterior representative",
-    )
-    plot!(
-        distances,
-        distance,
-        getindex.(recovery, :nearest_particle_distance);
-        marker=:star5,
-        linewidth=2,
-        label="nearest retained particle",
-    )
-    ratio = plot(
-        distance,
-        getindex.(recovery, :recovery_ratio);
-        marker=:diamond,
-        linewidth=2,
-        label="posterior mean",
-        xlabel="observed-world distance from ego prior (σ)",
-        ylabel="Rϕ",
-        title="Recovery ratio (< 1 improves on the prior)",
-    )
-    plot!(
-        ratio,
-        distance,
-        getindex.(recovery, :representative_recovery_ratio);
-        marker=:square,
-        linewidth=2,
-        label="posterior representative",
-    )
-    hline!(ratio, [1.0]; color=:black, linestyle=:dash, label="prior")
-    plot(target, distances, ratio; layout=(1, 3), size=(2700, 700))
+    let ordered = trials[sortperm(getindex.(trials, :prior_distance))],
+        distance = getindex.(ordered, :prior_distance),
+        trajectory_discrepancies = getindex.(ordered, :trajectory_discrepancy),
+        recovery_diagnostics = getindex.(ordered, :recovery_diagnostics),
+        prior_occupancy_mmd = getindex.(trajectory_discrepancies, :prior),
+        posterior_occupancy_mmd = getindex.(trajectory_discrepancies, :posterior_predictive),
+        prior_field_rmse = getindex.(recovery_diagnostics, :prior_field_rmse),
+        posterior_field_rmse = getindex.(recovery_diagnostics, :posterior_field_rmse),
+        prior_target_field_rmse = getindex.(recovery_diagnostics, :prior_target_field_rmse),
+        posterior_target_field_rmse = getindex.(recovery_diagnostics, :posterior_target_field_rmse)
+
+        function comparison_panel(prior_values, posterior_values; title, ylabel, prior_label, posterior_label)
+            panel = plot(distance, prior_values;
+                         color=:black, marker=:star5, markersize=7, markerstrokewidth=0, linewidth=2.8,
+                         label=prior_label, xlabel="Prior-whitened Mahalanobis distance", ylabel=ylabel, title=title,
+                         legend=:topright, titlefontsize=18, guidefontsize=16, tickfontsize=14, legendfontsize=13)
+            plot!(panel, distance, posterior_values;
+                  color=:red, marker=:star5, markersize=7, markerstrokewidth=0, linewidth=2.8, label=posterior_label)
+            return panel
+        end
+
+        occupancy_panel = comparison_panel(prior_occupancy_mmd, posterior_occupancy_mmd;
+                                          title="Observed-agent occupancy fit", ylabel="Ergodic occupancy metric: MMD²",
+                                          prior_label="Ego-agent prior", posterior_label="Posterior-predictive fit")
+        field_panel = comparison_panel(prior_field_rmse, posterior_field_rmse;
+                                       title="True field recovery", ylabel="Spatially weighted field RMSE",
+                                       prior_label="Ego-agent prior belief field",
+                                       posterior_label="Recovered posterior field")
+        target_panel = comparison_panel(prior_target_field_rmse, posterior_target_field_rmse;
+                                       title="Target field recovery", ylabel="Spatially weighted target RMSE",
+                                       prior_label="Ego-agent prior on target field",
+                                       posterior_label="Recovered posterior on target field")
+        return plot(occupancy_panel, field_panel, target_panel;
+                    layout=(1, 3), size=(3600, 1200), dpi=180,
+                    left_margin=24Plots.mm, right_margin=8Plots.mm,
+                    top_margin=10Plots.mm, bottom_margin=24Plots.mm,
+                    plot_title="Inference recovery across trials of increasing Mahalanobis distance " *
+                               "between world belief of ego-agent and observed agent belief",
+                    plot_titlefontsize=24)
+    end
 end
 
 function plot_world_trial_particles(trials, prior_mean, prior_covariance)
