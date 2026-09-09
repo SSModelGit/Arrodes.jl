@@ -32,10 +32,9 @@ function occupation_weights(problem::WorldInferenceProblem, timestep)
     weights ./ sum(weights)
 end
 
-function target_measure(problem::WorldInferenceProblem, coefficients)
-    context = problem.context
+function target_measure(context, target, coefficients)
     field = candidate_field(context, coefficients)
-    density = problem.score.target.density(
+    density = target.density(
         candidate_model(context, coefficients),
         context.quadrature,
         field,
@@ -45,6 +44,10 @@ function target_measure(problem::WorldInferenceProblem, coefficients)
     all(isfinite, masses) && all(>=(0), masses) && sum(masses) > 0 ||
         error("The target field must define finite, nonnegative probability mass")
     masses ./ sum(masses)
+end
+
+function target_measure(problem::WorldInferenceProblem, coefficients)
+    return target_measure(problem.context, problem.score.target, coefficients)
 end
 
 function measure_mmd(problem, left, right, cache)

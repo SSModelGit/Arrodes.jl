@@ -6,10 +6,12 @@ GaussianProcesses = "891a1506-143c-57d2-908e-e1f8e92e6de9"
 GenSMCP3 = "6e3e2a6b-0f0c-4e92-9366-99a169bb9780"
 GenTraceKernelDSL = "291bb3ad-7d9c-4053-a5d5-3e3d67792b79"
 GeoInterface = "cf35fbd7-0cd7-5166-be24-54bfbe79505f"
-JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MAT = "23992714-dd62-5051-b70f-ba57cb901cac"
+Match = "7eb4fadd-790c-5f42-8a69-bfa0b872bfbf"
 MuKumari = "28f59e21-8c37-415f-8237-13dbde849877"
+NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
 OpenSSL_jll = "458c3c95-2e84-50aa-8efc-19380b2a3a95"
 POMDPs = "a93abf59-7444-517b-a68a-c42f96afdd7d"
 Parameters = "d96e819e-fc66-5662-9728-84c9c7592b0a"
@@ -18,14 +20,15 @@ Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SCRIBE = "9d033a4c-5281-4799-847b-6fce4a2de302"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+UnPack = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"
 VulcanJ = "4dff405b-345f-4980-ad9a-8a8da005ecf3"
 cuDNN = "02a925ec-e4fe-4b08-9a7e-0d78e3d38ccd"
 
 [sources]
 Arrodes = {path = ".."}
-DynamicForwardDiff = {url = "https://github.com/probcomp/DynamicForwardDiff.jl", rev = "main"}
-GenSMCP3 = {url = "https://github.com/probcomp/GenSMCP3.jl", rev = "main"}
-GenTraceKernelDSL = {url = "https://github.com/probcomp/GenTraceKernelDSL.jl", rev = "main"}
+DynamicForwardDiff = {rev = "main", url = "https://github.com/probcomp/DynamicForwardDiff.jl"}
+GenSMCP3 = {rev = "main", url = "https://github.com/probcomp/GenSMCP3.jl"}
+GenTraceKernelDSL = {rev = "main", url = "https://github.com/probcomp/GenTraceKernelDSL.jl"}
 MuKumari = {path = "../../MuKumari"}
 SCRIBE = {path = "../../SCRIBE"}
 VulcanJ = {path = "../../VulcanJ"}

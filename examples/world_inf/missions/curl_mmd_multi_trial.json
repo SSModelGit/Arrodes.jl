@@ -27,8 +27,15 @@
   },
   "trajectory": {
     "samples": 100,
+    "agent_speed": 0.0625,
     "ergodic_iterations": 180,
-    "agent_speed": 0.0625
+    "dt": 1.0,
+    "learning_rate": 0.22,
+    "momentum": 0.85,
+    "control_weight": 0.002,
+    "boundary_weight": 20.0,
+    "line_search_steps": 8,
+    "line_search_decay": 0.5
   },
   "filter": {
     "particles": 512,

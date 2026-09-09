@@ -1,5 +1,4 @@
 using Arrodes
-using JSON3
 using LinearAlgebra: Symmetric, Diagonal, cholesky, norm, dot, tr, BLAS
 using Plots
 using Random: MersenneTwister
@@ -8,6 +7,8 @@ using SCRIBE.ROMSTools
 using SCRIBE.ROMSTools: prepare_roms_curl_shape, read_roms_flow_directions
 using Statistics: mean, median
 using VulcanJ
+
+import JSON
 
 BLAS.set_num_threads(1)
 
@@ -746,7 +747,7 @@ function save_results(mission, scenario, trials)
         ) for trial in trials],
     )
     open(joinpath(output, "curl_reconstruction_diagnostics.json"), "w") do io
-        JSON3.pretty(io, diagnostics)
+        JSON.print(io, diagnostics, 4)
         write(io, '\n')
     end
     savefig(
@@ -852,7 +853,7 @@ function save_results(mission, scenario, trials)
 end
 
 function prepare_mission(mission_path)
-    mission = copy(JSON3.read(read(mission_path, String)))
+    mission = JSON.parsefile(mission_path; dicttype=Dict{Symbol,Any})
     println("Preparing $(mission[:name]) from ROMS curl snapshots ...")
     settings = mission[:roms]
     archive = normpath(joinpath(@__DIR__, mission[:roms_archive]))
