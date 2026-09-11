@@ -1,4 +1,8 @@
-function world_inference_history(problem, result, truth)
+function world_inference_history(
+    problem,
+    result::EOFWorldInferenceResult,
+    truth,
+)
     cache = Dict{Symbol,Any}()
     [Dict(
         :timestep => timestep,
@@ -16,7 +20,11 @@ end
 coefficient_colors(values) =
     [value >= 0 ? :steelblue : :firebrick for value in values]
 
-function coefficient_limit(result, truth, prior_mean)
+function coefficient_limit(
+    result::EOFWorldInferenceResult,
+    truth,
+    prior_mean,
+)
     1.15max(
         maximum(abs, truth),
         maximum(abs, prior_mean),
@@ -29,7 +37,7 @@ function coefficient_limit(result, truth, prior_mean)
 end
 
 function plot_world_coefficient_comparison(
-    result,
+    result::EOFWorldInferenceResult,
     truth,
     prior_mean,
     timestep;
@@ -58,7 +66,7 @@ end
 
 function save_world_coefficient_animation(
     path,
-    result,
+    result::EOFWorldInferenceResult,
     truth,
     prior_mean;
     frame_count=80,
@@ -84,36 +92,24 @@ function save_world_coefficient_animation(
     gif(animation, path; fps)
 end
 
-function world_field_limit(result, truth_field)
-    prior_field = SCRIBE.reconstruct_eof_field(
-        result.model;
-        coefficients=view(result.coefficient_means, :, 1),
-    )
-    final_field = SCRIBE.reconstruct_eof_field(
-        result.model;
-        coefficients=view(result.coefficient_means, :, size(
-            result.coefficient_means,
-            2,
-        )),
-    )
+function world_field_limit(field_history, truth_field)
     max(
         maximum(abs, truth_field),
-        maximum(abs, prior_field),
-        maximum(abs, final_field),
+        maximum(abs, field_history),
         eps(Float64),
     )
 end
 
-function plot_world_posterior_comparison(
-    result,
+function plot_world_field_comparison(
+    field_history,
     truth_field,
     trajectory,
     field_plot,
-    timestep;
-    limit=world_field_limit(result, truth_field),
+    observation_count;
+    limit=world_field_limit(field_history, truth_field),
 )
     observed = field_plot(truth_field, "Observed-agent posterior mean", limit)
-    path_end = min(timestep, size(trajectory, 1))
+    path_end = min(observation_count, size(trajectory, 1))
     plot!(
         observed,
         trajectory[1:path_end, 1],
@@ -122,13 +118,10 @@ function plot_world_posterior_comparison(
         linewidth=2.5,
         label=false,
     )
-    inferred_field = SCRIBE.reconstruct_eof_field(
-        result.model;
-        coefficients=view(result.coefficient_means, :, timestep + 1),
-    )
+    inferred_field = view(field_history, :, observation_count + 1)
     inferred = field_plot(
         inferred_field,
-        "Ego inference after $timestep locations",
+        "Ego inference after $observation_count locations",
         limit,
     )
     plot(
@@ -140,25 +133,57 @@ function plot_world_posterior_comparison(
     )
 end
 
-function save_world_posterior_animation(
+function plot_world_posterior_comparison(
+    result::EOFWorldInferenceResult,
+    truth_field,
+    trajectory,
+    field_plot,
+    observation_count;
+    limit=nothing,
+)
+    field_history = SCRIBE.reconstruct_eof_field(
+        result.model; coefficients=result.coefficient_means,
+    )
+    plot_world_field_comparison(
+        field_history, truth_field, trajectory, field_plot, observation_count;
+        limit=isnothing(limit) ? world_field_limit(field_history, truth_field) : limit,
+    )
+end
+
+function plot_world_posterior_comparison(
+    result::SOMWorldInferenceResult,
+    field_history,
+    truth_field,
+    trajectory,
+    field_plot,
+    observation_count;
+    limit=nothing,
+)
+    plot_world_field_comparison(
+        field_history, truth_field, trajectory, field_plot, observation_count;
+        limit=isnothing(limit) ? world_field_limit(field_history, truth_field) : limit,
+    )
+end
+
+function save_world_field_animation(
     path,
-    result,
+    field_history,
     truth_field,
     trajectory,
     field_plot;
     frame_count=80,
     fps=8,
 )
-    horizon = size(result.coefficient_means, 2) - 1
+    horizon = size(field_history, 2) - 1
     timesteps = unique(round.(Int, range(
         1,
         horizon;
         length=min(frame_count, horizon),
     )))
-    limit = world_field_limit(result, truth_field)
+    limit = world_field_limit(field_history, truth_field)
     animation = @animate for timestep in timesteps
-        plot_world_posterior_comparison(
-            result,
+        plot_world_field_comparison(
+            field_history,
             truth_field,
             trajectory,
             field_plot,
@@ -170,7 +195,47 @@ function save_world_posterior_animation(
     gif(animation, path; fps)
 end
 
-function particle_projection(result, truth, prior_mean, prior_covariance)
+function save_world_posterior_animation(
+    path,
+    result::EOFWorldInferenceResult,
+    truth_field,
+    trajectory,
+    field_plot;
+    frame_count=80,
+    fps=8,
+)
+    field_history = SCRIBE.reconstruct_eof_field(
+        result.model; coefficients=result.coefficient_means,
+    )
+    save_world_field_animation(
+        path, field_history, truth_field, trajectory, field_plot;
+        frame_count, fps,
+    )
+end
+
+
+function save_world_posterior_animation(
+    path,
+    result::SOMWorldInferenceResult,
+    field_history,
+    truth_field,
+    trajectory,
+    field_plot;
+    frame_count=80,
+    fps=8,
+)
+    save_world_field_animation(
+        path, field_history, truth_field, trajectory, field_plot;
+        frame_count, fps,
+    )
+end
+
+function particle_projection(
+    result::EOFWorldInferenceResult,
+    truth,
+    prior_mean,
+    prior_covariance,
+)
     factor = cholesky(Symmetric(prior_covariance)).L
     whiten(vector) = factor \ (vector - prior_mean)
     whiten(particles::AbstractMatrix) = factor \ (
@@ -203,7 +268,7 @@ function particle_projection(result, truth, prior_mean, prior_covariance)
 end
 
 function plot_world_particle_distribution(
-    result,
+    result::EOFWorldInferenceResult,
     truth,
     prior_mean,
     prior_covariance,
@@ -252,7 +317,7 @@ end
 
 function plot_world_particle_health(
     problem,
-    result,
+    result::EOFWorldInferenceResult,
     truth,
     prior_mean,
     prior_covariance,
@@ -300,7 +365,7 @@ end
 function save_world_inference_visualizations(
     output,
     problem,
-    result,
+    result::EOFWorldInferenceResult,
     truth,
     truth_field,
     trajectory,
@@ -310,9 +375,11 @@ function save_world_inference_visualizations(
     diagnostics,
     frame_count=80,
     fps=8,
+    animate=true
 )
     mkpath(output)
     horizon = size(result.coefficient_means, 2) - 1
+
     savefig(
         plot_world_posterior_comparison(
             result,
@@ -352,23 +419,118 @@ function save_world_inference_visualizations(
         ),
         joinpath(output, "particle_health.png"),
     )
-    save_world_posterior_animation(
-        joinpath(output, "posterior_recovery.gif"),
-        result,
-        truth_field,
-        trajectory,
-        field_plot;
-        frame_count,
-        fps,
+
+    if animate
+        save_world_posterior_animation(
+            joinpath(output, "posterior_recovery.gif"),
+            result,
+            truth_field,
+            trajectory,
+            field_plot;
+            frame_count,
+            fps,
+        )
+        save_world_coefficient_animation(
+            joinpath(output, "coefficient_recovery.gif"),
+            result,
+            truth,
+            prior_mean;
+            frame_count,
+            fps,
+        )
+    end
+    output
+end
+
+function plot_som_probabilities(
+    result::SOMWorldInferenceResult,
+    observation_count,
+    truth_vertex=nothing,
+)
+    probabilities = view(
+        result.posterior_probabilities, :, observation_count + 1,
     )
-    save_world_coefficient_animation(
-        joinpath(output, "coefficient_recovery.gif"),
-        result,
-        truth,
-        prior_mean;
-        frame_count,
-        fps,
+    panel = bar(
+        result.model.data[:vertex_ids], probabilities;
+        color=:steelblue,
+        label="",
+        legend=false,
+        ylim=(0.0, 1.05maximum(result.posterior_probabilities)),
+        xlabel="SOM vertex ID",
+        ylabel="posterior probability",
+        title="SOM posterior after $observation_count locations",
+        size=(1300, 650),
+        left_margin=8Plots.mm,
+        bottom_margin=7Plots.mm,
     )
+    if !isnothing(truth_vertex)
+        vertex_id = result.model.data[:vertex_ids][truth_vertex]
+        vline!(
+            panel, [vertex_id];
+            color=:firebrick,
+            linewidth=2.5,
+            label="generating vertex",
+            legend=:topright,
+        )
+    end
+    panel
+end
+
+function save_som_probability_animation(
+    path,
+    result::SOMWorldInferenceResult,
+    truth_vertex=nothing;
+    frame_count=80,
+    fps=8,
+)
+    horizon = size(result.posterior_probabilities, 2) - 1
+    observation_counts = unique(round.(Int, range(
+        0, horizon; length=min(frame_count, horizon + 1),
+    )))
+    animation = @animate for observation_count in observation_counts
+        plot_som_probabilities(result, observation_count, truth_vertex)
+    end
+    mkpath(dirname(abspath(path)))
+    gif(animation, path; fps)
+end
+
+function save_world_inference_visualizations(
+    output,
+    result::SOMWorldInferenceResult,
+    field_history,
+    truth_field,
+    trajectory,
+    field_plot;
+    truth_vertex=nothing,
+    frame_count=80,
+    fps=8,
+    animate=true,
+)
+    mkpath(output)
+    horizon = size(result.posterior_probabilities, 2) - 1
+
+    savefig(
+        plot_world_posterior_comparison(
+            result, field_history, truth_field, trajectory, field_plot, horizon,
+        ),
+        joinpath(output, "posterior_comparison.png"),
+    )
+    savefig(
+        plot_som_probabilities(result, horizon, truth_vertex),
+        joinpath(output, "vertex_probabilities.png"),
+    )
+
+    if animate
+        save_world_posterior_animation(
+            joinpath(output, "posterior_recovery.gif"),
+            result, field_history, truth_field, trajectory, field_plot;
+            frame_count, fps,
+        )
+        save_som_probability_animation(
+            joinpath(output, "vertex_probabilities.gif"),
+            result, truth_vertex; frame_count, fps,
+        )
+    end
     output
 end
 
@@ -426,15 +588,15 @@ function plot_world_trial_particles(trials, prior_mean, prior_covariance)
         plot!(
             panel;
             title="trial $(trial[:trial])",
-            legend=trial[:trial] == 1 ? :topright : false,
-            xlabel=trial[:trial] > 5 ? "ego→observed (prior σ)" : "",
-            ylabel=trial[:trial] in (1, 6) ? "orthogonal (prior σ)" : "",
+            legend=index == 1 ? :topright : false,
+            xlabel=index > 5 ? "ego→observed (prior σ)" : "",
+            ylabel=index in (1, 6) ? "orthogonal (prior σ)" : "",
             titlefontsize=10,
             guidefontsize=8,
             tickfontsize=7,
         )
         panel
-    end for trial in trials]
+    end for (index, trial) in enumerate(trials)]
     plot(
         panels...;
         layout=(2, 5),
@@ -444,25 +606,28 @@ function plot_world_trial_particles(trials, prior_mean, prior_covariance)
     )
 end
 
-function plot_world_result_comparison(
-    results,
-    ordering,
+function world_result_comparison_panels(
+    field_histories,
+    labels,
     truth_field,
     trajectory,
     field_plot,
     timestep;
     limit=nothing,
+    observed_title="Observed-agent world and trajectory",
 )
-    inferred_fields = [SCRIBE.reconstruct_eof_field(
-        results[name].model;
-        coefficients=view(results[name].coefficient_means, :, timestep + 1),
-    ) for name in ordering]
+    methods = sort(collect(keys(labels)); by=String)
+    inferred_fields = [
+        view(field_histories[name], :, timestep + 1)
+        for name in methods
+    ]
     limit = isnothing(limit) ? max(
         maximum(abs, truth_field),
         (maximum(abs, field) for field in inferred_fields)...,
         eps(Float64),
     ) : limit
-    observed = field_plot(truth_field, "Observed-agent world and trajectory", limit)
+
+    observed = field_plot(truth_field, observed_title, limit)
     path_end = min(timestep, size(trajectory, 1))
     plot!(
         observed,
@@ -472,32 +637,58 @@ function plot_world_result_comparison(
         linewidth=2.5,
         label=false,
     )
-    panels = [field_plot(field, String(name), limit)
-              for (name, field) in zip(ordering, inferred_fields)]
-    columns = 2
-    rows = ceil(Int, (length(panels) + 1) / columns)
-    plot(observed, panels...; layout=(rows, columns), size=(2200, 540rows))
+
+    inferred = [
+        field_plot(field, labels[name], limit)
+        for (name, field) in zip(methods, inferred_fields)
+    ]
+
+    return [observed; inferred]
+end
+
+function plot_world_result_comparison(
+    field_histories,
+    labels,
+    truth_field,
+    trajectory,
+    field_plot,
+    timestep;
+    limit=nothing,
+    observed_title="Observed-agent world and trajectory",
+)
+    panels = world_result_comparison_panels(
+        field_histories, labels, truth_field, trajectory, field_plot, timestep;
+        limit=limit, observed_title=observed_title
+    )
+    panel_count = length(panels)
+    columns = panel_count <= 3 ? panel_count : ceil(Int, sqrt(panel_count))
+    rows = ceil(Int, panel_count / columns)
+
+    plot(
+        panels...;
+        layout=(rows, columns),
+        size=(1100 * columns, 620 * rows),
+        titlefontsize=15,
+    )
 end
 
 function save_world_result_comparison_animation(
     path,
-    results,
-    ordering,
+    field_histories,
+    labels,
     truth_field,
     trajectory,
     field_plot;
     frame_count=80,
     fps=8,
+    observed_title="Observed-agent world and trajectory",
 )
-    horizon = minimum(size(result.coefficient_means, 2) - 1
-                      for result in values(results))
-    final_fields = [SCRIBE.reconstruct_eof_field(
-        results[name].model;
-        coefficients=view(results[name].coefficient_means, :, horizon + 1),
-    ) for name in ordering]
+    horizon = minimum(
+        size(fields, 2) - 1 for fields in values(field_histories)
+    )
     limit = max(
         maximum(abs, truth_field),
-        (maximum(abs, field) for field in final_fields)...,
+        (maximum(abs, field_histories[name]) for name in keys(labels))...,
         eps(Float64),
     )
     timesteps = unique(round.(Int, range(
@@ -507,13 +698,14 @@ function save_world_result_comparison_animation(
     )))
     animation = @animate for timestep in timesteps
         plot_world_result_comparison(
-            results,
-            ordering,
+            field_histories,
+            labels,
             truth_field,
             trajectory,
             field_plot,
             timestep,
             limit=limit,
+            observed_title=observed_title,
         )
     end
     mkpath(dirname(abspath(path)))

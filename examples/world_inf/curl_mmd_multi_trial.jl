@@ -1,14 +1,19 @@
-using Arrodes
-using LinearAlgebra: Symmetric, Diagonal, cholesky, norm, dot, tr, BLAS
-using Plots
+using Arrodes: TrajectoryObservation, WorldInferenceProblem,
+    calibrate_discrepancy_scale, eof_field_score, eof_target_field,
+    infer_world, kernel_discrepancy, plot_world_trial_particles,
+    plot_world_trial_recovery, save_world_inference_visualizations,
+    target_measure, target_measure_mmd, world_inference_context
+using JSON: parsefile, print as json_print
+using LinearAlgebra: BLAS, Diagonal, Symmetric, cholesky, dot, norm, tr
+using Plots: plot, plot!, savefig
 using Random: MersenneTwister
-using SCRIBE
-using SCRIBE.ROMSTools
-using SCRIBE.ROMSTools: prepare_roms_curl_shape, read_roms_flow_directions
+using SCRIBE: eof_coefficients, eof_model_at_coefficients,
+    eof_prior_covariance, reconstruct_eof_field
+using SCRIBE.ROMSTools: fit_roms_eof, plot_roms_curl,
+    prepare_roms_curl_shape, read_roms_flow_directions, wet_grid_locations
 using Statistics: mean, median
-using VulcanJ
 
-import JSON
+import VulcanJ
 
 BLAS.set_num_threads(1)
 
@@ -37,7 +42,7 @@ function posterior_target_field(
 )
     inferred_target = zeros(eltype(pweights), length(sweights))
     for pindex in axes(particles, 2)
-        pfield = SCRIBE.reconstruct_eof_field(
+        pfield = reconstruct_eof_field(
             model; coefficients=view(particles, :, pindex),
         )
         inferred_target .+= pweights[pindex] .* nonnegative_curl_target(
@@ -112,7 +117,7 @@ function construct_world_recovery_diagnostics_cache(
         ranked_indices = view(ranking, 1:p_count)
         for (rank, pindex) in enumerate(ranked_indices)
             coefficients = view(particles, :, pindex)
-            field = SCRIBE.reconstruct_eof_field(
+            field = reconstruct_eof_field(
                 problem.context.model; coefficients=coefficients,
             )
             target_field = nonnegative_curl_target(
@@ -126,7 +131,7 @@ function construct_world_recovery_diagnostics_cache(
             )
         end
 
-        posterior_field = SCRIBE.reconstruct_eof_field(
+        posterior_field = reconstruct_eof_field(
             model; coefficients=filt_state[:coefficient_mean],
         )
         posterior_world_rmse[timestep] = weighted_rmse(
@@ -175,10 +180,10 @@ function construct_world_recovery_diagnostics_cache(
         )
 
         diagnostics[:inferred_coefficients] = posterior
-        prior_field = SCRIBE.reconstruct_eof_field(
+        prior_field = reconstruct_eof_field(
             model; coefficients=model.ϕ,
         )
-        post_field = SCRIBE.reconstruct_eof_field(
+        post_field = reconstruct_eof_field(
             model; coefficients=posterior,
         )
         prior_target_field = nonnegative_curl_target(
@@ -400,7 +405,7 @@ function trial_worlds(mission, scenario)
     snapshots = collect(
         scenario[:validation_start]:size(scenario[:roms][:data], 2),
     )
-    coefficients = SCRIBE.eof_coefficients(
+    coefficients = eof_coefficients(
         scenario[:model],
         view(scenario[:roms][:data], :, snapshots),
     )
@@ -494,7 +499,7 @@ function run_trial(
     coefficients = world[:coefficients]
     observed = Dict(
         :coefficients => coefficients,
-        :field => SCRIBE.reconstruct_eof_field(
+        :field => reconstruct_eof_field(
             scenario[:model];
             coefficients,
         ),
@@ -554,7 +559,7 @@ function run_trial(
     recovery = recovery_diagnostics[:coefficient_recovery]
     design = world
     inferred_coefficients = result.coefficient_means[:, end]
-    inferred_field = SCRIBE.reconstruct_eof_field(
+    inferred_field = reconstruct_eof_field(
         result.model;
         coefficients=inferred_coefficients,
     )
@@ -566,7 +571,7 @@ function run_trial(
     )
     inferred_target_field = zeros(length(inferred_field))
     for index in axes(result.final_particles, 2)
-        particle_field = SCRIBE.reconstruct_eof_field(
+        particle_field = reconstruct_eof_field(
             result.model;
             coefficients=view(result.final_particles, :, index),
         )
@@ -747,7 +752,7 @@ function save_results(mission, scenario, trials)
         ) for trial in trials],
     )
     open(joinpath(output, "curl_reconstruction_diagnostics.json"), "w") do io
-        JSON.print(io, diagnostics, 4)
+        json_print(io, diagnostics, 4)
         write(io, '\n')
     end
     savefig(
@@ -853,7 +858,7 @@ function save_results(mission, scenario, trials)
 end
 
 function prepare_mission(mission_path)
-    mission = JSON.parsefile(mission_path; dicttype=Dict{Symbol,Any})
+    mission = parsefile(mission_path; dicttype=Dict{Symbol,Any})
     println("Preparing $(mission[:name]) from ROMS curl snapshots ...")
     settings = mission[:roms]
     archive = normpath(joinpath(@__DIR__, mission[:roms_archive]))
@@ -871,14 +876,14 @@ function prepare_mission(mission_path)
     )
     params = fitted[:model].params
     ego_snapshot = round(Int, mission[:ego][:snapshot_fraction] * fitted[:n_training])
-    ego_coefficients = SCRIBE.eof_coefficients(
+    ego_coefficients = eof_coefficients(
         params,
         roms[:data][:, ego_snapshot],
     )
-    model = SCRIBE.eof_model_at_coefficients(params, ego_coefficients)
+    model = eof_model_at_coefficients(params, ego_coefficients)
     prior_covariance =
         mission[:observed_world_prior][:archive_covariance_multiplier] .*
-        SCRIBE.eof_prior_covariance(model)
+        eof_prior_covariance(model)
     quadrature_count = min(settings[:quadrature_count], size(roms[:locations], 1))
     center = mean(roms[:locations]; dims=1)
     quadrature_rows = [argmin(vec(sum(
@@ -934,7 +939,7 @@ function prepare_mission(mission_path)
         :field_scale => fitted[:field_scale],
         :target_floor => mission[:target][:floor_fraction] * fitted[:field_scale],
         :calibration_coefficients => [
-            SCRIBE.eof_coefficients(params, roms[:data][:, snapshot])
+            eof_coefficients(params, roms[:data][:, snapshot])
             for snapshot in calibration_ids
         ],
     )

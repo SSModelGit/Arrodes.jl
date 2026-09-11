@@ -1,436 +1,721 @@
-using Arrodes
-using SCRIBE
-using SCRIBE.ROMSTools
+using Arrodes: WorldInferenceProblem, calibrate_discrepancy_scale,
+    eof_field_score, eof_target_field, infer_world,
+    plot_world_result_comparison, plot_world_trial_particles,
+    save_world_inference_visualizations, save_world_result_comparison_animation,
+    world_inference_context
+using JSON: parsefile
 using LinearAlgebra: BLAS, Symmetric, cholesky, norm
-using Statistics: mean
-using Random: MersenneTwister
+using Match: @match
+using Plots: plot, plot!, savefig
+using Random: MersenneTwister, randperm
+using SCRIBE: SOMModel, eof_coefficients, eof_model_at_coefficients,
+    eof_prior_covariance, reconstruct_eof_field
+using SCRIBE.ROMSTools: fit_roms_eof, prepare_roms_curl_shape,
+    read_roms_flow_directions, velocity_curl, wet_grid_locations
+using Statistics: mean, std
+using UnPack: @unpack
 
-import JSON
-using NCDatasets
-using UnPack: @pack!, @unpack
+import Plots
 
 include("_sim_trial_helpers.jl")
 
 BLAS.set_num_threads(1)
 
-function load_som_data(rel_path::String)
-    NCDataset(joinpath(@__DIR__, rel_path), "r") do ds
-        vertex_names = Symbol.(sort(filter(k->startswith(k, "vertex_0"), collect(keys(ds)))))
-        Dict{Symbol, Any}(
-            :x => Float64.(ds["x_coords"][:]),
-            :y => Float64.(ds["y_coords"][:]),
-            :components => ds["component"][:],
-            :connectivity => Float64.(ds["topology_connectivity"][:,:]),
-            :mask => Bool.(permutedims(ds["mask"][:,:,:], (3,2,1))),
-            :vertex_ids => Int.(ds["vertex_id"][:]),
-            :vertex_names => vertex_names,
-            :vertices => [permutedims(coalesce.(ds[k][:,:,:], NaN), (3,2,1))
-                for k in vertex_names
-            ],
-        )
-    end
-end
-
-function som_vertex_curl(vertex, x, y)
+function som_vertex_world(vertex, model::SOMModel, roms)
+    @unpack x, y = model.data
     u = view(vertex, :, :, 1)
     v = view(vertex, :, :, 2)
-    curl = fill(NaN, size(u))
-
-    for j in axes(u, 2), i in axes(u, 1)
-        i₀, i₁ = max(i-1, 1), min(i+1, size(u, 1))
-        j₀, j₁ = max(j-1, 1), min(j+1, size(u, 2))
-        
-        stencil = (
-            u[i₀, j], u[i₁, j], u[i, j₀], u[i, j₁],
-            v[i₀, j], v[i₁, j], v[i, j₀], v[i, j₁]
-        )
-        if !all(isfinite, stencil); continue; end
-
-        ∂v_∂x = (v[i₁, j] - v[i₀, j]) / (x[i₁] - x[i₀])
-        ∂u_∂y = (u[i, j₁] - u[i, j₀]) / (y[j₁] - y[j₀])
-        curl[i, j] = ∂v_∂x - ∂u_∂y
-    end
-    return curl
-end
-
-function som_vertex_world(vertex, som, roms)
+    curl = velocity_curl(u, v, x, y)
     wet = roms[:wet_mask]
 
-    curl = som_vertex_curl(vertex, som[:x], som[:y])
     field = abs.(vec(curl)[wet])
     field ./= mean(field)
 
-    u = vec(view(vertex, :, :, 1))[wet]
-    v = vec(view(vertex, :, :, 2))[wet]
-    speed = hypot.(u, v)
-
-    flow_directions = hcat(u, v)
+    u_wet = vec(u)[wet]
+    v_wet = vec(v)[wet]
+    speed = hypot.(u_wet, v_wet)
+    directions = hcat(u_wet, v_wet)
     moving = speed .> eps(Float64)
-    flow_directions[moving, :] ./= reshape(speed[moving], :, 1)
-    flow_directions[.!moving, :] .= 0.0
-    return Dict(
+    directions[moving, :] ./= reshape(speed[moving], :, 1)
+    directions[.!moving, :] .= 0.0
+
+    Dict(
         :field => field,
-        :flow_directions => flow_directions,
+        :flow_directions => directions,
     )
 end
 
-function trial_worlds(mission, scenario)
-    let world_setup_type = mission[:trials][:world_source]
-        @match world_setup_type begin
-            "roms_snapshots" => trial_worlds_from_roms_snapshots(mission, scenario)
-            "som_vertices" => trial_worlds_from_som_vertices(mission, scenario)
-        end
+som_candidate_worlds(model::SOMModel, roms) = [
+    som_vertex_world(vertex, model, roms)
+    for vertex in model.data[:vertices]
+]
+
+function select_quadrature_rows(locations, count)
+    center = mean(locations; dims=1)
+    selected = [argmin(vec(sum(abs2, locations .- center; dims=2)))]
+    distances = vec(sum(
+        abs2,
+        locations .- locations[first(selected), :]';
+        dims=2,
+    ))
+    while length(selected) < min(count, size(locations, 1))
+        row = argmax(distances)
+        push!(selected, row)
+        distances = min.(distances, vec(sum(
+            abs2,
+            locations .- locations[row, :]';
+            dims=2,
+        )))
     end
+    selected
+end
+
+function gaussian_vertex_prior(coefficients, mean, covariance)
+    factor = cholesky(Symmetric(covariance)).L
+    whitened = factor \ (coefficients .- reshape(mean, :, 1))
+    log_probabilities = -0.5 .* vec(sum(abs2, whitened; dims=1))
+    probabilities = exp.(log_probabilities .- maximum(log_probabilities))
+    probabilities ./ sum(probabilities)
+end
+
+function world_score(target, mission, scenario, discrepancy_scale)
+    eof_field_score(
+        target;
+        kernel_bandwidth=scenario[:kernel_bandwidth],
+        discrepancy_scale,
+        β_max=mission[:filter][:beta_max],
+        maturity_half_time=mission[:filter][:maturity_half_time],
+        maturity_power=mission[:filter][:maturity_power],
+        location=state -> (
+            Float64.(state) .- scenario[:metric_minima]
+        ) ./ scenario[:metric_spans],
+    )
+end
+
+function prepare_mission(mission)
+    println("Preparing $(mission[:name]) from ROMS and SOM world models ...")
+    @unpack temporal_stride, spatial_stride, training_fraction,
+        eof_rank, eof_oversample, eof_power_iterations,
+        quadrature_count, calibration_worlds = mission[:roms]
+
+    archive = normpath(joinpath(@__DIR__, mission[:roms_archive]))
+    roms = prepare_roms_curl_shape(
+        archive;
+        temporal_stride,
+        spatial_stride,
+    )
+    fitted = fit_roms_eof(
+        roms;
+        training_fraction,
+        rank=eof_rank,
+        oversample=eof_oversample,
+        power_iterations=eof_power_iterations,
+    )
+    params = fitted[:model].params
+    ego_coefficients = zeros(length(params.decomposition.eigenvalues))
+    eof_model = eof_model_at_coefficients(params, ego_coefficients)
+    prior_covariance =
+        mission[:observed_world_prior][:archive_covariance_multiplier] .*
+        eof_prior_covariance(eof_model)
+
+    rows = select_quadrature_rows(roms[:locations], quadrature_count)
+    quadrature = roms[:locations][rows, :]
+    minima = vec(minimum(quadrature; dims=1))
+    spans = max.(
+        vec(maximum(quadrature; dims=1)) - minima,
+        eps(Float64),
+    )
+    kernel_locations = (quadrature .- minima') ./ spans'
+    spatial_weights = params.decomposition.weights
+    quadrature_weights = spatial_weights[rows]
+    eof_context = world_inference_context(
+        eof_model;
+        prior_covariance,
+        quadrature,
+        kernel_locations,
+        quadrature_weights,
+    )
+
+    som_path = normpath(joinpath(@__DIR__, mission[:som_model_data]))
+    som_model = SOMModel(som_path)
+    som_worlds = som_candidate_worlds(som_model, roms)
+    som_fields = hcat(getindex.(som_worlds, :field)...)
+    som_coefficients = eof_coefficients(params, som_fields)
+    som_prior = gaussian_vertex_prior(
+        som_coefficients,
+        ego_coefficients,
+        prior_covariance,
+    )
+    som_context = world_inference_context(
+        som_model;
+        prior_probabilities=som_prior,
+        quadrature,
+        kernel_locations,
+        quadrature_weights,
+        fields=som_fields[rows, :],
+    )
+
+    kernel_bandwidth = Float64(mission[:target][:kernel_bandwidth])
+    target_floor = mission[:target][:floor_fraction] * fitted[:field_scale]
+    scenario = Dict(
+        :archive => archive,
+        :roms => roms,
+        :eof_model => eof_model,
+        :eof_context => eof_context,
+        :som_model => som_model,
+        :som_context => som_context,
+        :som_worlds => som_worlds,
+        :som_fields => som_fields,
+        :som_coefficients => som_coefficients,
+        :validation_start => fitted[:validation_start],
+        :quadrature_rows => rows,
+        :kernel_bandwidth => kernel_bandwidth,
+        :planner_bandwidth => kernel_bandwidth * maximum(spans),
+        :metric_minima => minima,
+        :metric_spans => spans,
+        :target_floor => target_floor,
+        :spatial_weights => spatial_weights,
+        :prior_covariance => prior_covariance,
+    )
+
+    target = eof_target_field(
+        link=Symbol(mission[:target][:link]),
+        floor=target_floor,
+        name=Symbol(mission[:target][:name]),
+    )
+    template = world_score(target, mission, scenario, 1.0)
+    calibration_ids = unique(round.(Int, range(
+        fitted[:n_training] + 1,
+        fitted[:calibration_end];
+        length=calibration_worlds,
+    )))
+    calibration_coefficients = [
+        eof_coefficients(params, view(roms[:data], :, snapshot))
+        for snapshot in calibration_ids
+    ]
+    eof_scale = calibrate_discrepancy_scale(
+        eof_context,
+        template,
+        calibration_coefficients,
+    )
+    som_scale = calibrate_discrepancy_scale(som_context, template)
+    scores = Dict(
+        :EOF => world_score(target, mission, scenario, eof_scale),
+        :SOM => world_score(target, mission, scenario, som_scale),
+    )
+    println(
+        "Offline MMD² units: EOF=$(round(eof_scale; sigdigits=4)), " *
+        "SOM=$(round(som_scale; sigdigits=4))",
+    )
+
+    settings = mission[:filter][:proposal]
+    proposal = @match settings[:mechanism] begin
+        "gauss_newton" => Dict{Symbol,Any}(
+            :mechanism => :gauss_newton,
+            :covariance_scale => Float64(settings[:covariance_scale]),
+            :optimizer_steps => Int(settings[:optimizer_steps]),
+        )
+        "random_walk" => Dict{Symbol,Any}(
+            :mechanism => :random_walk,
+            :scale => Float64(settings[:scale]),
+        )
+    end
+
+    Dict(
+        :mission => mission,
+        :scenario => scenario,
+        :scores => scores,
+        :proposal => proposal,
+    )
 end
 
 function distinguish_worlds_by_distance(mission, scenario, candidates)
-    context = scenario[:context]
-    factor = cholesky(Symmetric(context.prior_covariance)).L
-    prior = context.model.ϕ
-    distances = [norm(factor \ (world[:coefficients] - prior)) for world in candidates]
+    @unpack worlds_per_distance, snapshot_gap,
+        prior_sigma_distances = mission[:trials]
+    factor = cholesky(Symmetric(scenario[:prior_covariance])).L
+    prior = scenario[:eof_model].ϕ
+    distances = [
+        norm(factor \ (candidate[:coefficients] - prior))
+        for candidate in candidates
+    ]
     available = trues(length(candidates))
+    worlds = Dict{Symbol,Any}[]
 
-    [begin
-        remaining = findall(available)
-        selected = remaining[argmin(abs.(distances[remaining] .- target))]
-        available[selected] = false
-
-        merge(
-            candidates[selected],
-            Dict(
+    for target in prior_sigma_distances
+        for _ in 1:worlds_per_distance
+            remaining = findall(available)
+            selected = remaining[
+                argmin(abs.(distances[remaining] .- target))
+            ]
+            push!(worlds, merge(candidates[selected], Dict(
                 :requested_distance => Float64(target),
-                :actual_distance => distances[selected]
-            )
-        )
-    end for target in mission[:trials][:prior_sigma_distances]]
+                :actual_distance => distances[selected],
+            )))
+            available[selected] = false
+
+            if haskey(candidates[selected], :snapshot)
+                snapshot = candidates[selected][:snapshot]
+                for index in remaining
+                    if abs(candidates[index][:snapshot] - snapshot) < snapshot_gap
+                        available[index] = false
+                    end
+                end
+            end
+        end
+    end
+
+    worlds
 end
 
-function trial_worlds_from_roms_snapshots(mission, scenario)
-    @unpack archive, roms = scenario
-    roms_data = roms[:data]
-    snapshots = collect(scenario[:validation_start]:size(roms_data, 2))
-    coefficients = SCRIBE.eof_coefficients(scenario[:model], view(roms_data, :, snapshots))
-
+function som_trial_worlds(mission, scenario)
+    model = scenario[:som_model]
     candidates = [
         Dict(
-            :source => :roms_snapshot,
+            :source => :som_vertices,
+            :vertex => vertex,
+            :field => scenario[:som_worlds][vertex][:field],
+            :flow_directions => scenario[:som_worlds][vertex][:flow_directions],
+            :coefficients => Vector{Float64}(
+                view(scenario[:som_coefficients], :, vertex),
+            ),
+        )
+        for vertex in eachindex(model.data[:vertices])
+    ]
+    distinguish_worlds_by_distance(mission, scenario, candidates)
+end
+
+function roms_trial_worlds(mission, scenario)
+    model = scenario[:eof_model]
+    roms = scenario[:roms]
+    snapshots = collect(scenario[:validation_start]:size(roms[:data], 2))
+    coefficients = eof_coefficients(
+        model.params,
+        view(roms[:data], :, snapshots),
+    )
+    candidates = [
+        Dict(
+            :source => :roms_snapshots,
             :snapshot => snapshots[index],
+            :field => Vector{Float64}(view(roms[:data], :, snapshots[index])),
             :coefficients => Vector{Float64}(view(coefficients, :, index)),
         )
-        for index in axes(coefficients, 2)
+        for index in eachindex(snapshots)
     ]
-    worlds = distinguish_worlds_by_distance(mission, scenario, candidates)
-
-    directions = read_roms_flow_directions(archive, roms, getindex.(worlds, :snapshot))
-    return [
-        merge(world, 
-              Dict(:flow_directions => directions[world[:snapshot]]))
-    for world in worlds]
+    selected = distinguish_worlds_by_distance(mission, scenario, candidates)
+    directions = read_roms_flow_directions(
+        scenario[:archive],
+        roms,
+        getindex.(selected, :snapshot),
+    )
+    [
+        merge(world, Dict(
+            :flow_directions => directions[world[:snapshot]],
+        ))
+        for world in selected
+    ]
 end
 
-function trial_worlds_from_som_vertices(mission, scenario)
-    @unpack som_model, roms, model = scenario
-    @unpack vertex_ids, vertices = som_model
-    candidates = [begin
-        vertex_world = som_vertex_world(vertices[index], som_model, roms)
-        coefficients = SCRIBE.eof_coefficients(model, vertex_world[:field])
-        Dict(
-            :source => :som_vertex,
-            :vertex_id => vertex_ids[index],
-            :coefficients => Vector{Float64}(coefficients),
-            :flow_directions => vertex_world[:flow_directions],
-        )
-    end for index in eachindex(vertices)]
-    return distinguish_worlds_by_distance(mission, scenario, candidates)
-end
-
-function load_mission_info(mission_path::String)
-    mission = JSON.parsefile(mission_path; dicttype=Dict{Symbol,Any})
-    println("Preparing $(mission[:name]) from ROMS data and pre-trained SOM maps ...")
-    @unpack temporal_stride, spatial_stride, training_fraction,
-            eof_rank, eof_oversample, eof_power_iterations,
-            quadrature_count, calibration_worlds = mission[:roms]
-    archive = normpath(joinpath(@__DIR__, mission[:roms_archive]))
-
-    roms = prepare_roms_curl_shape(
-        archive,
-        temporal_stride=temporal_stride,
-        spatial_stride=spatial_stride
-    )
-    fitted = fit_roms_eof(roms;
-        training_fraction=training_fraction,
-        rank=eof_rank,
-        oversample=eof_oversample,
-        power_iterations=eof_power_iterations
-    )
-    som_model = load_som_data(joinpath(@__DIR__, mission[:som_model_data]))
-    @unpack data, locations = roms
-    roms_data, roms_locs = data, locations
-    @unpack n_training, field_scale, calibration_end, validation_start = fitted
-    params = fitted[:model].params
-
-    let snapshot_fraction = mission[:ego][:snapshot_fraction],
-        prior_covariance_multiplier = mission[:observed_world_prior][:archive_covariance_multiplier],
-        n_locs_roms = size(roms_locs, 1),
-        center_roms = mean(roms_locs; dims=1)
-
-        ego_snapshot = round(Int, snapshot_fraction * n_training)
-        ego_coefficients = SCRIBE.eof_coefficients(
-            params, roms_data[:, ego_snapshot]
-        )
-        model = SCRIBE.eof_model_at_coefficients(params, ego_coefficients)
-        prior_covariance = prior_covariance_multiplier .*
-            SCRIBE.eof_prior_covariance(model)
-        selected_quadrature_count = min(quadrature_count, n_locs_roms)
-        quadrature_rows = [argmin(vec(sum(abs2, roms_locs .- center_roms; dims=2)))]
-        distances = vec(sum(abs2, roms_locs .- roms_locs[first(quadrature_rows), :]'; dims=2))
-        while length(quadrature_rows) < selected_quadrature_count
-            next_row = argmax(distances)
-            push!(quadrature_rows, next_row)
-            distances = min.(distances, vec(sum(abs2, roms_locs .- roms_locs[next_row, :]'; dims=2)))
-        end
-        quadrature = roms_locs[quadrature_rows, :]
-
-        @unpack link, floor_fraction, kernel_bandwidth, name = mission[:target]
-        @unpack beta_max, maturity_half_time, maturity_power = mission[:filter]
-        minima = vec(minimum(quadrature; dims=1))
-        spans = max.(vec(maximum(quadrature; dims=1)) .- minima, eps(Float64))
-        kernel_locations = (quadrature .- minima') ./ spans'
-        calibration_ids = unique(round.(Int, range(
-            n_training + 1, calibration_end;
-            length=calibration_worlds
-        )))
-        context = world_inference_context(
-            model;
-            quadrature,
-            kernel_locations,
-            quadrature_weights=params.decomposition.weights[quadrature_rows],
-            prior_covariance,
-        )
-        target_floor = floor_fraction * field_scale
-        calibration_coefficients = [
-            SCRIBE.eof_coefficients(params, roms_data[:, snapshot])
-            for snapshot in calibration_ids
-        ]
-        scenario = Dict(
-            :archive => archive,
-            :roms => roms,
-            :model => model,
-            :context => context,
-            :som_model => som_model,
-            :ego_snapshot => ego_snapshot,
-            :validation_start => validation_start,
-            :quadrature_rows => quadrature_rows,
-            :kernel_bandwidth => kernel_bandwidth,
-            :planner_bandwidth => kernel_bandwidth * maximum(spans),
-            :metric_minima => minima,
-            :metric_spans => spans,
-            :field_scale => field_scale,
-            :target_floor => target_floor,
-            :calibration_coefficients => calibration_coefficients,
-        )
-
-        target = eof_target_field(
-            link=Symbol(link), floor=target_floor, name=Symbol(name),
-        )
-        template = eof_field_score(
-            target;
-            kernel_bandwidth=kernel_bandwidth,
-            discrepancy_scale = 1.0,
-            β_max=beta_max,
-            maturity_half_time=maturity_half_time,
-            maturity_power=maturity_power,
-            location=state -> (Float64.(state) .- minima) ./ spans
-        )
-        discrepancy_unit = calibrate_discrepancy_scale(
-            context, template, calibration_coefficients
-        )
-
-        score = eof_field_score(
-            target;
-            kernel_bandwidth=kernel_bandwidth,
-            discrepancy_scale=discrepancy_unit,
-            β_max=beta_max,
-            maturity_half_time=maturity_half_time,
-            maturity_power=maturity_power,
-            location=state -> (Float64.(state) .- minima) ./ spans
-        )
-        @unpack mechanism, covariance_scale, optimizer_steps = mission[:filter][:proposal]
-        proposal = Dict{Symbol, Any}(
-            :mechanism => Symbol(mechanism),
-            :covariance_scale => Float64(covariance_scale),
-            :optimizer_steps => Int(optimizer_steps)
-        )
-        worlds = trial_worlds(mission, scenario)
-        return Dict(
-            :mission => mission,
-            :scenario => scenario,
-            :score => score,
-            :proposal => proposal,
-            :worlds => worlds
-        )
-    end
-end
-
-function parse_results(
-    result,
-    recovery_diagnostics,
-    problem,
-    observed,
-    observed_trajectory,
-    flow_directions,
-    world,
-    scenario,
-    trial,
-)
-    @unpack coefficients, field = observed
-    @unpack actual_distance = world
-    @unpack context, roms, quadrature_rows, target_floor = scenario
-    @unpack inferred_target_field,
-            posterior_predictive_trajectory_discrepancy,
-            world_rmse,
-            target_rmse,
-            particle_mmd,
-            posterior_world_rmse,
-            posterior_target_rmse,
-            posterior_mmd,
-            behavioral_mmd,
-            ess_history,
-            coefficient_spread,
-            prior_field_rmse,
-            posterior_field_rmse,
-            prior_target_field_rmse,
-            posterior_target_field_rmse = recovery_diagnostics
-
-    truth_coefficients = coefficients
-    truth_field = field
-    full_weights = result.model.params.decomposition.weights
-    truth_target_field = nonnegative_curl_target(
-        truth_field,
-        full_weights,
-        target_floor,
-    )
-    discrepancy_cache = Dict{Symbol,Any}()
-    horizon = length(problem.observations)
-    trajectory_discrepancy = Dict(
-        :prior => kernel_discrepancy(
-            problem,
-            horizon,
-            context.model.ϕ,
-            discrepancy_cache,
-        ),
-        :posterior_predictive => posterior_predictive_trajectory_discrepancy,
-    )
-    reported_diagnostics = Dict{Symbol,Any}()
-    @pack! reported_diagnostics = world_rmse,
-        target_rmse,
-        particle_mmd,
-        posterior_world_rmse,
-        posterior_target_rmse,
-        posterior_mmd,
-        behavioral_mmd,
-        ess_history,
-        coefficient_spread,
-        prior_field_rmse,
-        posterior_field_rmse,
-        prior_target_field_rmse,
-        posterior_target_field_rmse
-
-    Dict(
-        :trial => trial,
-        :prior_distance => actual_distance,
-        :truth_field => truth_field,
-        :truth_target_field => truth_target_field,
-        :inferred_target_field => inferred_target_field,
-        :truth_coefficients => truth_coefficients,
-        :trajectory_discrepancy => trajectory_discrepancy,
-        :flow_directions => flow_directions,
-        :problem => problem,
-        :result => result,
-        :elapsed_times => observed_trajectory[:elapsed_times],
-        :recovery_diagnostics => reported_diagnostics,
-        :trajectory => wet_grid_locations(
-            roms,
-            quadrature_rows[observed_trajectory[:site_indices]],
-        ),
-    )
+function field_rmse_history(field_history, truth, weights)
+    [
+        weighted_rmse(view(field_history, :, column), truth, weights)
+        for column in axes(field_history, 2)
+    ]
 end
 
 function run_trial(
-    mission, scenario, score, proposal, flow_directions, world, trial
+    mission, scenario, scores, proposal, world, trial, start;
+    keep_history=false,
 )
-    observed_coefficients = world[:coefficients]
+    context = scenario[:eof_context]
+    target = scores[:EOF].target
+    density = target.density(
+        nothing, context.quadrature, world[:field][scenario[:quadrature_rows]], context
+    )
+    density = Float64.(density) .* context.quadrature_weights
+    density ./= sum(density)
+    trajectory = simulate_observable_trajectory(
+        mission, context, scenario[:planner_bandwidth], density;
+        start,
+    )
+    observations = trajectory[:observations]
+    eof_problem = WorldInferenceProblem(
+        context=scenario[:eof_context],
+        score=scores[:EOF],
+        observations=observations,
+    )
+    som_problem = WorldInferenceProblem(
+        context=scenario[:som_context],
+        score=scores[:SOM],
+        observations=observations,
+    )
     observed = Dict(
-        :coefficients => observed_coefficients,
-        :field => SCRIBE.reconstruct_eof_field(
-            scenario[:model]; coefficients=observed_coefficients,
+        :coefficients => world[:coefficients],
+        :field => world[:field],
+    )
+    diagnostics = keep_history ? construct_world_recovery_diagnostics_cache(
+        eof_problem, observed, scenario[:target_floor],
+        mission[:filter][:particles]; top_count=10,
+    ) : nothing
+    seed = UInt64(mission[:trials][:seed]) + UInt64(2trial)
+    eof_result = infer_world(
+        eof_problem;
+        n_particles=mission[:filter][:particles],
+        ess_threshold=mission[:filter][:ess_threshold],
+        rejuvenation_steps=mission[:filter][:rejuvenation_steps],
+        diagnostics=keep_history ? diagnostics[:callbacks] : Dict{Symbol,Any}(),
+        proposal,
+        rng=MersenneTwister(seed),
+    )
+    som_result = infer_world(som_problem)
+
+    eof_final_field = reconstruct_eof_field(
+        eof_result.model;
+        coefficients=view(eof_result.coefficient_means, :, size(
+            eof_result.coefficient_means, 2,
+        )),
+    )
+    som_final_field = scenario[:som_fields] * view(
+        som_result.posterior_probabilities, :,
+        size(som_result.posterior_probabilities, 2),
+    )
+    summary = Dict(
+        :prior_distance => world[:actual_distance],
+        :requested_distance => world[:requested_distance],
+        :eof_final_rmse => weighted_rmse(
+            eof_final_field, world[:field], scenario[:spatial_weights],
+        ),
+        :som_final_rmse => weighted_rmse(
+            som_final_field, world[:field], scenario[:spatial_weights],
         ),
     )
-    seed = UInt64(mission[:trials][:seed]) + UInt64(2trial)
+    !keep_history && return summary
 
-    observed_trajectory = simulate_observable_trajectory(
-        mission,
-        scenario,
-        score,
-        observed_coefficients;
-        behavior_type=:ergodic,
+    field_histories = Dict(
+        :EOF => reconstruct_eof_field(
+            eof_result.model;
+            coefficients=eof_result.coefficient_means,
+        ),
+        :SOM => scenario[:som_fields] * som_result.posterior_probabilities,
     )
-    problem = WorldInferenceProblem(
-        context=scenario[:context], score=score,
-        observations=observed_trajectory[:observations]
+    rmse_histories = Dict(
+        name => field_rmse_history(
+            fields,
+            world[:field],
+            scenario[:spatial_weights],
+        )
+        for (name, fields) in field_histories
     )
-    @unpack particles, ess_threshold, rejuvenation_steps = mission[:filter]
-    recovery_diagnostics = construct_world_recovery_diagnostics_cache(
-        problem,
-        observed,
-        scenario[:target_floor],
-        particles;
-        top_count=10,
+    merge(summary, Dict(
+        :trial => trial,
+        :source => world[:source],
+        :truth_field => world[:field],
+        :truth_coefficients => world[:coefficients],
+        :flow_directions => world[:flow_directions],
+        :trajectory => wet_grid_locations(
+            scenario[:roms],
+            scenario[:quadrature_rows][trajectory[:site_indices]],
+        ),
+        :elapsed_times => trajectory[:elapsed_times],
+        :problem => eof_problem,
+        :result => eof_result,
+        :som_result => som_result,
+        :field_histories => field_histories,
+        :rmse_histories => rmse_histories,
+        :recovery_diagnostics => diagnostics,
+        :truth_vertex => get(world, :vertex, nothing),
+    ))
+end
+
+function plot_final_rmse(trials)
+    targets = sort(unique(getindex.(trials, :requested_distance)))
+    groups = [
+        filter(trial -> trial[:requested_distance] == target, trials)
+        for target in targets
+    ]
+    distances = [
+        mean(getindex.(group, :prior_distance))
+        for group in groups
+    ]
+    eof_rmse = [
+        getindex.(group, :eof_final_rmse)
+        for group in groups
+    ]
+    som_rmse = [
+        getindex.(group, :som_final_rmse)
+        for group in groups
+    ]
+
+    panel = plot(
+        distances, mean.(eof_rmse); yerror=std.(eof_rmse),
+        color=:firebrick, marker=:star5, markersize=7,
+        markerstrokecolor=:firebrick, markerstrokewidth=0, linewidth=2.8,
+        label="EOF posterior mean",
+        xlabel="Actual prior-whitened distance from mean world",
+        ylabel="Final spatially weighted field RMSE",
+        title="Final recovery (mean ± one standard deviation)",
+        size=(1600, 900), legend=:topright,
+        left_margin=18Plots.mm, right_margin=8Plots.mm,
+        top_margin=6Plots.mm, bottom_margin=14Plots.mm,
+        titlefontsize=20, guidefontsize=16, tickfontsize=13, legendfontsize=13,
     )
-    result = infer_world(problem;
-        n_particles=particles,
-        ess_threshold=ess_threshold,
-        rejuvenation_steps=rejuvenation_steps,
-        diagnostics=recovery_diagnostics[:callbacks],
-        proposal=proposal,
-        rng=MersenneTwister(seed + 1)
+
+    plot!(
+        panel, distances, mean.(som_rmse);
+        yerror=std.(som_rmse), color=:steelblue, marker=:star5, markersize=7,
+        markerstrokecolor=:steelblue, markerstrokewidth=0, linewidth=2.8,
+        label="SOM posterior mean",
     )
-    return parse_results(
-        result,
-        recovery_diagnostics,
-        problem,
-        observed,
-        observed_trajectory,
-        flow_directions,
-        world,
-        scenario,
-        trial,
+
+    return panel
+end
+
+function save_trial_results(output, mission, scenario, trial)
+    mkpath(output)
+
+    field_plot = trial_curl_plot(trial, scenario, mission)
+    horizon = size(trial[:field_histories][:EOF], 2) - 1
+    frame_count = mission[:visualization][:animation_frames]
+    fps = mission[:visualization][:fps]
+    animate = mission[:visualization][:animate]
+    labels = Dict(
+        :EOF => "EOF posterior mean",
+        :SOM => "SOM posterior mean",
+    )
+    observed_title = trial[:source] == :som_vertices ?
+        "Observed SOM-vertex world and trajectory" :
+        "Observed ROMS-snapshot world and trajectory"
+
+    comparison = plot_world_result_comparison(
+        trial[:field_histories],
+        labels,
+        trial[:truth_field],
+        trial[:trajectory],
+        field_plot,
+        horizon;
+        observed_title,
+    )
+    plot!(
+        comparison;
+        left_margin=5Plots.mm,
+        right_margin=5Plots.mm,
+        top_margin=5Plots.mm,
+        bottom_margin=7Plots.mm,
+    )
+    savefig(
+        comparison,
+        joinpath(output, "eof_som_posterior_comparison.png"),
+    )
+
+    if animate
+        save_world_result_comparison_animation(
+            joinpath(output, "eof_som_posterior_comparison.gif"),
+            trial[:field_histories],
+            labels,
+            trial[:truth_field],
+            trial[:trajectory],
+            field_plot;
+            frame_count,
+            fps,
+            observed_title,
+        )
+    end
+
+    rmse = plot_world_method_rmse(trial)
+    plot!(
+        rmse;
+        size=(1400, 800),
+        titlefontsize=18,
+        guidefontsize=15,
+        tickfontsize=12,
+        legendfontsize=12,
+    )
+    savefig(rmse, joinpath(output, "eof_som_rmse.png"))
+
+    save_world_inference_visualizations(
+        joinpath(output, "eof"),
+        trial[:problem],
+        trial[:result],
+        trial[:truth_coefficients],
+        trial[:truth_field],
+        trial[:trajectory],
+        scenario[:eof_model].ϕ,
+        scenario[:prior_covariance],
+        field_plot;
+        diagnostics=trial[:recovery_diagnostics],
+        frame_count,
+        fps,
+        animate,
+    )
+    savefig(
+        plot_world_recovery_over_time(trial),
+        joinpath(output, "eof", "recovery_over_time.png"),
+    )
+
+    save_world_inference_visualizations(
+        joinpath(output, "som"),
+        trial[:som_result],
+        trial[:field_histories][:SOM],
+        trial[:truth_field],
+        trial[:trajectory],
+        field_plot;
+        truth_vertex=trial[:truth_vertex],
+        frame_count,
+        fps,
+        animate,
     )
 end
 
-function main(mission_path::Union{String, Nothing}=nothing)
-    if isnothing(mission_path)
-        mission_path = joinpath(@__DIR__, "missions/", "som_comparison_multi_trial.json")
+function save_source_results(
+    output, mission, scenario, source, trials, displayed,
+)
+    source_output = joinpath(output, source)
+    mkpath(source_output)
+
+    savefig(
+        plot_world_trial_reconstructions(displayed, scenario, mission),
+        joinpath(source_output, "eof_som_world_reconstructions.png"),
+    )
+    savefig(
+        plot_ten_trial_rmse_histories(displayed),
+        joinpath(source_output, "rmse_over_time.png"),
+    )
+    savefig(
+        plot_final_rmse(trials),
+        joinpath(source_output, "final_rmse_by_prior_distance.png"),
+    )
+    savefig(
+        plot_world_trial_particles(
+            displayed,
+            scenario[:eof_model].ϕ,
+            scenario[:prior_covariance],
+        ),
+        joinpath(source_output, "eof_particle_locations.png"),
+    )
+
+    for trial in displayed
+        save_trial_results(
+            joinpath(
+                source_output,
+                "trial_$(lpad(trial[:trial], 2, '0'))",
+            ),
+            mission,
+            scenario,
+            trial,
+        )
     end
-    mission_info = load_mission_info(mission_path)
-    let mission = mission_info[:mission],
-        scenario = mission_info[:scenario],
-        score = mission_info[:score],
-        proposal = mission_info[:proposal],
-        worlds = mission_info[:worlds]
-        trials = [begin
-            println("Running trial $(trial)/$(length(worlds))")
-            run_trial(
+end
+
+function run_source(
+    source,
+    output,
+    mission,
+    scenario,
+    scores,
+    proposal,
+    sites,
+    rng,
+)
+    worlds = @match source begin
+        "roms_snapshots" => roms_trial_worlds(mission, scenario)
+        "som_vertices" => som_trial_worlds(mission, scenario)
+    end
+    worlds_per_distance = mission[:trials][:worlds_per_distance]
+    start_count = mission[:trials][:trajectories_per_world]
+    trials = Dict{Symbol,Any}[]
+    displayed = Dict{Symbol,Any}[]
+    trial = 0
+
+    for (world_index, world) in enumerate(worlds)
+        starts = sites[
+            randperm(rng, length(sites))[1:start_count]
+        ]
+
+        for (start_index, start) in enumerate(starts)
+            trial += 1
+            println(
+                "Running $source trial $trial/" *
+                "$(length(worlds) * start_count)"
+            )
+            keep_history = (world_index - 1) % worlds_per_distance == 0 &&
+                start_index == 1
+            result = run_trial(
                 mission,
                 scenario,
-                score,
+                scores,
                 proposal,
-                world[:flow_directions],
                 world,
-                trial
+                trial,
+                start,
+                keep_history=keep_history,
             )
-        end for (trial, world) in enumerate(worlds)]
-        output = save_results(mission, scenario, trials)
-        println("Saved mission results to $output")
+            push!(trials, Dict(
+                :requested_distance => result[:requested_distance],
+                :prior_distance => result[:prior_distance],
+                :eof_final_rmse => result[:eof_final_rmse],
+                :som_final_rmse => result[:som_final_rmse],
+            ))
+            if keep_history
+                result[:trial] = length(displayed) + 1
+                push!(displayed, result)
+            end
+        end
     end
+
+    save_source_results(
+        output,
+        mission,
+        scenario,
+        source,
+        trials,
+        displayed,
+    )
+end
+
+function main(mission_path=nothing)
+    if isnothing(mission_path)
+        mission_path = joinpath(
+            @__DIR__,
+            "missions",
+            "som_comparison_multi_trial.json",
+        )
+    end
+
+    mission = parsefile(mission_path; dicttype=Dict{Symbol,Any})
+    @unpack run_roms, run_som, seed = mission[:trials]
+
+    if !run_roms && !run_som; return nothing; end
+
+    prepared = prepare_mission(mission)
+    @unpack mission, scenario, scores, proposal = prepared
+
+    output = normpath(joinpath(@__DIR__, mission[:rel_output_path]))
+    mkpath(output)
+
+    sites = [
+        Tuple(Float64.(row))
+        for row in eachrow(scenario[:eof_context].quadrature)
+    ]
+    rng = MersenneTwister(seed)
+
+    sources = [
+        source for (source, enabled) in (
+            ("roms_snapshots", run_roms),
+            ("som_vertices", run_som),
+        ) if enabled
+    ]
+    for source in sources
+        run_source(
+            source,
+            output,
+            mission,
+            scenario,
+            scores,
+            proposal,
+            sites,
+            rng,
+        )
+    end
+
+    println("Saved mission results to $output")
+    output
 end

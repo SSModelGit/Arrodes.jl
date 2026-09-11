@@ -1,0 +1,66 @@
+{
+  "name": "roms_som_world_inference_comparison",
+  "roms_archive": "../../bigdata/rams_head_model_output/stjohn_hourly_5m_velocity_ramhead_v2.mat",
+  "som_model_data": "../../bigdata/300_epochs_grid_7x7.nc",
+  "representation": "normalized_absolute_curl_shape",
+  "roms": {
+    "temporal_stride": 3,
+    "spatial_stride": 1,
+    "training_fraction": 0.8,
+    "eof_rank": 10,
+    "eof_oversample": 16,
+    "eof_power_iterations": 2,
+    "quadrature_count": 196,
+    "calibration_worlds": 9
+  },
+  "observed_world_prior": {
+    "archive_covariance_multiplier": 1.0
+  },
+  "target": {
+    "link": "magnitude",
+    "floor_fraction": 0.01,
+    "kernel_bandwidth": 0.2,
+    "name": "absolute_curl"
+  },
+  "trajectory": {
+    "samples": 100,
+    "agent_speed": 0.0625,
+    "ergodic_iterations": 180,
+    "dt": 1.0,
+    "learning_rate": 0.22,
+    "momentum": 0.85,
+    "control_weight": 0.002,
+    "boundary_weight": 20.0,
+    "line_search_steps": 8,
+    "line_search_decay": 0.5
+  },
+  "filter": {
+    "particles": 512,
+    "ess_threshold": 0.65,
+    "rejuvenation_steps": 2,
+    "proposal": {
+      "mechanism": "gauss_newton",
+      "covariance_scale": 1.0,
+      "optimizer_steps": 8
+    },
+    "beta_max": 125.0,
+    "maturity_half_time": 18.0,
+    "maturity_power": 2.0
+  },
+  "trials": {
+    "prior_sigma_distances": [1.35, 1.85, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5],
+    "seed": 1297439828,
+    "run_roms": true,
+    "run_som": false,
+    "worlds_per_distance": 10,
+    "trajectories_per_world": 10,
+    "snapshot_gap": 8
+  },
+  "visualization": {
+    "arrow_stride": 7,
+    "animation_frames": 80,
+    "fps": 8,
+    "animate": false
+  },
+  "rel_output_path": "../results/world_inf/som_comparison_multi_trial"
+}

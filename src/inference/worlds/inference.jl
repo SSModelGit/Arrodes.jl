@@ -7,7 +7,7 @@ const world_behavior_factor = WorldBehaviorFactor()
 function Gen.logpdf(
     ::WorldBehaviorFactor,
     observed::Bool,
-    problem::WorldInferenceProblem,
+    problem::WorldInferenceProblem{EOFWorldInferenceContext},
     timestep::Int,
     coefficients::AbstractVector,
     cache::Dict{Symbol,Any},
@@ -22,7 +22,7 @@ Gen.has_output_grad(::WorldBehaviorFactor) = false
 Gen.has_argument_grads(::WorldBehaviorFactor) = (false, false, false, false)
 
 @gen function world_model(
-    problem::WorldInferenceProblem,
+    problem::WorldInferenceProblem{EOFWorldInferenceContext},
     cache::Dict{Symbol,Any},
     timestep::Int,
 )
@@ -203,7 +203,7 @@ end
 
 @kernel function world_forward(
     previous_trace,
-    problem::WorldInferenceProblem,
+    problem::WorldInferenceProblem{EOFWorldInferenceContext},
     cache::Dict{Symbol,Any},
     timestep::Int,
     proposal::Dict{Symbol,Any},
@@ -247,7 +247,7 @@ end
 
 @kernel function world_backward(
     updated_trace,
-    problem::WorldInferenceProblem,
+    problem::WorldInferenceProblem{EOFWorldInferenceContext},
     cache::Dict{Symbol,Any},
     timestep::Int,
     proposal::Dict{Symbol,Any},
@@ -294,7 +294,7 @@ end
 
 @kernel function world_rejuvenation(
     trace,
-    problem::WorldInferenceProblem,
+    problem::WorldInferenceProblem{EOFWorldInferenceContext},
     cache::Dict{Symbol,Any},
     timestep::Int,
     proposal::Dict{Symbol,Any},
@@ -367,7 +367,7 @@ function world_mh(trace, problem, cache, timestep, proposal, rng)
 end
 
 function infer_world(
-    problem::WorldInferenceProblem;
+    problem::WorldInferenceProblem{EOFWorldInferenceContext};
     n_particles::Int=256,
     ess_threshold::Float64=0.5,
     resampling::Symbol=:residual,
@@ -483,7 +483,7 @@ function infer_world(
         moments=final,
     )
 
-    WorldInferenceResult(
+    EOFWorldInferenceResult(
         model=problem.context.model,
         coefficient_means=means,
         coefficient_covariances=covariances,
@@ -495,18 +495,66 @@ function infer_world(
     )
 end
 
-function world_posterior(result::WorldInferenceResult, timestep::Int=size(
-    result.coefficient_means,
-    2,
-))
-    mean = result.coefficient_means[:, timestep]
-    covariance = result.coefficient_covariances[timestep]
+function infer_world(problem::WorldInferenceProblem{SOMWorldInferenceContext})
+    prior = problem.context.prior_probabilities
+    horizon = length(problem.observations)
+
+    posterior = Matrix{Float64}(undef, length(prior), horizon + 1)
+    posterior[:, 1] = prior
+
+    cache = Dict{Symbol,Any}()
+    for ts in 1:horizon
+        log_probs = log.(prior)
+        map!(
+            v->log_probs[v]+world_logscore(problem, ts, v, cache),
+            log_probs, eachindex(prior)
+        )
+        log_probs .-= maximum(log_probs)
+        probabilities = exp.(log_probs)
+        posterior[:, ts + 1] = probabilities ./ sum(probabilities)
+    end
+    SOMWorldInferenceResult(
+        model=problem.context.model,
+        posterior_probabilities=posterior,
+    )
+end
+
+function world_posterior(
+    result::EOFWorldInferenceResult,
+    observation_count::Int=size(result.coefficient_means, 2) - 1,
+)
+    column = observation_count + 1
+    coefficient_mean = view(result.coefficient_means, :, column)
     Dict(
-        :coefficient_mean => mean,
-        :coefficient_covariance => covariance,
-        :map_mean => SCRIBE.reconstruct_eof_field(
+        :coefficient_mean => Vector{Float64}(coefficient_mean),
+        :coefficient_covariance => result.coefficient_covariances[column],
+        :model_mean => SCRIBE.reconstruct_eof_field(
             result.model;
-            coefficients=mean,
+            coefficients=coefficient_mean,
         ),
+    )
+end
+
+function world_posterior(
+    result::SOMWorldInferenceResult,
+    observation_count::Int=size(result.posterior_probabilities, 2) - 1,
+)
+    column = observation_count + 1
+    probabilities = view(result.posterior_probabilities, :, column)
+    vertices = result.model.data[:vertices]
+    map_vertex = argmax(probabilities)
+
+    model_mean = mapreduce(
+        vertex -> probabilities[vertex] .* vertices[vertex],
+        +,
+        eachindex(probabilities),
+    )
+    Dict(
+        :model_mean => model_mean,
+        :map_model => vertices[map_vertex],
+        :map_vertex => map_vertex,
+        :map_vertex_id => result.model.data[:vertex_ids][map_vertex],
+        :map_probability => probabilities[map_vertex],
+        :probabilities => Vector{Float64}(probabilities),
     )
 end

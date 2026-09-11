@@ -16,13 +16,15 @@ include("model.jl")
 include("scoring.jl")
 include("inference.jl")
 
-export WorldInferenceContext, TrajectoryObservation, ErgodicTargetField
-export ErgodicBehaviorScore, WorldInferenceProblem, WorldInferenceResult
-export world_inference_context
-export eof_target_field, eof_field_score, target_measure, target_measure_mmd
-export posterior_target_measure
-export kernel_discrepancy
-export world_score_components
-export default_world_proposal, infer_world, world_posterior
+export WorldInferenceContext, EOFWorldInferenceContext, SOMWorldInferenceContext,
+    WorldInferenceResult, EOFWorldInferenceResult, SOMWorldInferenceResult,
+    WorldInferenceProblem,
+    TrajectoryObservation, ErgodicTargetField, ErgodicBehaviorScore
+
+export world_inference_context,
+    eof_target_field, eof_field_score, target_measure, target_measure_mmd,
+    posterior_target_measure, kernel_discrepancy,
+    world_score_components, default_world_proposal,
+    infer_world, world_posterior
 
 end

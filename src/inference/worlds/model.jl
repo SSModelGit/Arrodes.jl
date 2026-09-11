@@ -1,4 +1,6 @@
-@with_kw_noshow struct WorldInferenceContext
+abstract type WorldInferenceContext end
+
+@with_kw_noshow struct EOFWorldInferenceContext <: WorldInferenceContext
     model::SCRIBE.EOFClimateModel
     prior_covariance::Matrix{Float64}
     quadrature::Matrix{Float64}
@@ -6,6 +8,15 @@
     quadrature_weights::Vector{Float64}
     quadrature_mean::Vector{Float64}
     quadrature_basis::Matrix{Float64}
+end
+
+@with_kw_noshow struct SOMWorldInferenceContext <: WorldInferenceContext
+    model::SCRIBE.SOMModel
+    prior_probabilities::Vector{Float64}
+    quadrature::Matrix{Float64}
+    kernel_locations::Matrix{Float64}
+    quadrature_weights::Vector{Float64}
+    fields::Matrix{Float64}
 end
 
 @with_kw_noshow struct TrajectoryObservation{S,A}
@@ -35,13 +46,15 @@ end
     query_weights::Dict{Int,Float64} = Dict{Int,Float64}()
 end
 
-@with_kw_noshow struct WorldInferenceProblem
-    context::WorldInferenceContext
+@with_kw_noshow struct WorldInferenceProblem{C<:WorldInferenceContext}
+    context::C
     score::ErgodicBehaviorScore
     observations::Vector{TrajectoryObservation}
 end
 
-@with_kw_noshow struct WorldInferenceResult
+abstract type WorldInferenceResult end
+
+@with_kw_noshow struct EOFWorldInferenceResult <: WorldInferenceResult
     model::SCRIBE.EOFClimateModel
     coefficient_means::Matrix{Float64}
     coefficient_covariances::Vector{Matrix{Float64}}
@@ -50,6 +63,11 @@ end
     initial_particles::Matrix{Float64}
     final_particles::Matrix{Float64}
     final_weights::Vector{Float64}
+end
+
+@with_kw_noshow struct SOMWorldInferenceResult <: WorldInferenceResult
+    model::SCRIBE.SOMModel
+    posterior_probabilities::Matrix{Float64}
 end
 
 function world_inference_context(
@@ -72,7 +90,7 @@ function world_inference_context(
     all(isfinite, weights) && all(>=(0), weights) && sum(weights) > 0 ||
         error("Quadrature weights must define finite, nonnegative probability mass")
     weights ./= sum(weights)
-    WorldInferenceContext(
+    EOFWorldInferenceContext(
         model=model,
         prior_covariance=covariance,
         quadrature=Matrix{Float64}(quadrature),
@@ -80,6 +98,29 @@ function world_inference_context(
         quadrature_weights=weights,
         quadrature_mean=Vector{Float64}(SCRIBE.eof_mean_at(model, quadrature)),
         quadrature_basis=Matrix{Float64}(SCRIBE.eof_basis_at(model, quadrature)),
+    )
+end
+
+function world_inference_context(
+    model::SCRIBE.SOMModel;
+    prior_probabilities::AbstractVector,
+    quadrature::AbstractMatrix,
+    kernel_locations::AbstractMatrix=quadrature,
+    quadrature_weights::AbstractVector,
+    fields::AbstractMatrix,
+)
+    probabilities = Float64.(prior_probabilities)
+    probabilities ./= sum(probabilities)
+    weights = Float64.(quadrature_weights)
+    weights ./= sum(weights)
+
+    SOMWorldInferenceContext(
+        model=model,
+        prior_probabilities=probabilities,
+        quadrature=Matrix{Float64}(quadrature),
+        kernel_locations=Matrix{Float64}(kernel_locations),
+        quadrature_weights=weights,
+        fields=Matrix{Float64}(fields),
     )
 end
 

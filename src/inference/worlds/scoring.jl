@@ -1,12 +1,18 @@
-candidate_model(context::WorldInferenceContext, coefficients) =
+candidate_model(context::EOFWorldInferenceContext, coefficients) =
     SCRIBE.EOFClimateModel(
         SCRIBE.get_model_time(context.model),
         context.model.params,
         coefficients,
     )
 
-candidate_field(context::WorldInferenceContext, coefficients) =
+candidate_model(context::SOMWorldInferenceContext, vertex::Integer) =
+    context.model.data[:vertices][vertex]
+
+candidate_field(context::EOFWorldInferenceContext, coefficients) =
     context.quadrature_mean + context.quadrature_basis * coefficients
+
+candidate_field(context::SOMWorldInferenceContext, vertex::Integer) =
+    view(context.fields, :, vertex)
 
 kernel_value(bandwidth, left, right) =
     exp(-sum(abs2, left - right) / (2bandwidth^2))
@@ -32,10 +38,10 @@ function occupation_weights(problem::WorldInferenceProblem, timestep)
     weights ./ sum(weights)
 end
 
-function target_measure(context, target, coefficients)
-    field = candidate_field(context, coefficients)
+function target_measure(context, target, candidate)
+    field = candidate_field(context, candidate)
     density = target.density(
-        candidate_model(context, coefficients),
+        candidate_model(context, candidate),
         context.quadrature,
         field,
         context,
@@ -46,8 +52,8 @@ function target_measure(context, target, coefficients)
     masses ./ sum(masses)
 end
 
-function target_measure(problem::WorldInferenceProblem, coefficients)
-    return target_measure(problem.context, problem.score.target, coefficients)
+function target_measure(problem::WorldInferenceProblem, candidate)
+    return target_measure(problem.context, problem.score.target, candidate)
 end
 
 function measure_mmd(problem, left, right, cache)
@@ -65,19 +71,22 @@ end
 """Squared kernel MMD between two normalized world-induced target measures."""
 function target_measure_mmd(
     problem::WorldInferenceProblem,
-    left_coefficients,
-    right_coefficients,
+    left_candidate,
+    right_candidate,
     cache=Dict{Symbol,Any}(),
 )
     measure_mmd(
         problem,
-        target_measure(problem, left_coefficients),
-        target_measure(problem, right_coefficients),
+        target_measure(problem, left_candidate),
+        target_measure(problem, right_candidate),
         cache,
     )
 end
 
-function posterior_target_measure(problem, particles, weights)
+function posterior_target_measure(
+    problem::WorldInferenceProblem{EOFWorldInferenceContext},
+    particles, weights
+)
     posterior = zeros(size(problem.context.quadrature, 1))
     for index in axes(particles, 2)
         posterior .+= weights[index] .* target_measure(
@@ -88,7 +97,28 @@ function posterior_target_measure(problem, particles, weights)
     posterior
 end
 
-function posterior_target_measure(problem, result::WorldInferenceResult)
+function posterior_target_measure(
+    problem::WorldInferenceProblem{SOMWorldInferenceContext},
+    result::SOMWorldInferenceResult,
+    timestep::Int=size(result.posterior_probabilities, 2),
+)
+    probabilities = view(result.posterior_probabilities, :, timestep)
+
+    posterior = mapreduce(
+        v -> probabilities[v] .* target_measure(problem, v),
+        +,
+        eachindex(probabilities)
+    )
+
+    # normalize an already normalized posterior to ensure no floating-point nonsense
+    return posterior ./ sum(posterior)
+end
+
+
+function posterior_target_measure(
+    problem::WorldInferenceProblem{EOFWorldInferenceContext},
+    result::EOFWorldInferenceResult
+)
     posterior_target_measure(
         problem,
         result.final_particles,
@@ -97,14 +127,14 @@ function posterior_target_measure(problem, result::WorldInferenceResult)
 end
 
 function target_measure_mmd(
-    problem,
-    particles::AbstractMatrix, weights::AbstractVector, coefficients,
+    problem::WorldInferenceProblem{EOFWorldInferenceContext},
+    particles::AbstractMatrix, weights::AbstractVector, candidate,
     cache=Dict{Symbol,Any}(),
 )
     measure_mmd(
         problem,
         posterior_target_measure(problem, particles, weights),
-        target_measure(problem, coefficients),
+        target_measure(problem, candidate),
         cache,
     )
 end
@@ -112,18 +142,21 @@ end
 function target_measure_mmd(
     problem::WorldInferenceProblem,
     result::WorldInferenceResult,
-    coefficients,
+    candidate,
     cache=Dict{Symbol,Any}(),
 )
     measure_mmd(
         problem,
         posterior_target_measure(problem, result),
-        target_measure(problem, coefficients),
+        target_measure(problem, candidate),
         cache,
     )
 end
 
-function target_measure_jacobian(problem, coefficients; finite_difference=1e-4)
+function target_measure_jacobian(
+    problem::WorldInferenceProblem{EOFWorldInferenceContext}, coefficients;
+    finite_difference=1e-4
+)
     context = problem.context
     score = problem.score
     target = target_measure(problem, coefficients)
@@ -191,17 +224,17 @@ function measure_discrepancy(problem, timestep, target, cache)
     )
 end
 
-function kernel_discrepancy(problem, timestep, coefficients, cache=Dict{Symbol,Any}())
+function kernel_discrepancy(problem, timestep, candidate, cache=Dict{Symbol,Any}())
     measure_discrepancy(
         problem,
         timestep,
-        target_measure(problem, coefficients),
+        target_measure(problem, candidate),
         cache,
     )
 end
 
 function kernel_discrepancy(
-    problem, timestep,
+    problem::WorldInferenceProblem{EOFWorldInferenceContext}, timestep,
     particles::AbstractMatrix, weights::AbstractVector,
     cache=Dict{Symbol,Any}(),
 )
@@ -214,7 +247,7 @@ function kernel_discrepancy(
 end
 
 function kernel_discrepancy(
-    problem,
+    problem::WorldInferenceProblem,
     timestep,
     result::WorldInferenceResult,
     cache=Dict{Symbol,Any}(),
@@ -238,9 +271,9 @@ maturity(score::ErgodicBehaviorScore, timestep) = timestep == 0 ? 0.0 :
     timestep^score.maturity_power /
     (timestep^score.maturity_power + score.maturity_half_time^score.maturity_power)
 
-function trajectory_query(problem, timestep, coefficients)
+function trajectory_query(problem, timestep, candidate)
     isnothing(problem.score.query) && return 0.0
-    model = candidate_model(problem.context, coefficients)
+    model = candidate_model(problem.context, candidate)
     values = [
         problem.score.query(model, observation, problem.context)
         for observation in problem.observations[1:timestep]
@@ -248,7 +281,10 @@ function trajectory_query(problem, timestep, coefficients)
     dot(occupation_weights(problem, timestep), values)
 end
 
-function trajectory_query_gradient(problem, timestep, coefficients; finite_difference=1e-4)
+function trajectory_query_gradient(
+    problem::WorldInferenceProblem{EOFWorldInferenceContext}, timestep, coefficients;
+    finite_difference=1e-4
+)
     isnothing(problem.score.query) && return zeros(length(coefficients))
     if !isnothing(problem.score.query_gradient)
         model = candidate_model(problem.context, coefficients)
@@ -278,13 +314,13 @@ function trajectory_query_gradient(problem, timestep, coefficients; finite_diffe
     gradient
 end
 
-function world_score_components(problem, timestep, coefficients, cache=Dict{Symbol,Any}())
+function world_score_components(problem, timestep, candidate, cache=Dict{Symbol,Any}())
     score = problem.score
     weight = query_weight(score, timestep)
     discrepancy = weight < 1 ? kernel_discrepancy(
-        problem, timestep, coefficients, cache,
+        problem, timestep, candidate, cache,
     ) : 0.0
-    query = weight > 0 ? trajectory_query(problem, timestep, coefficients) : 0.0
+    query = weight > 0 ? trajectory_query(problem, timestep, candidate) : 0.0
     β = score.β_max * maturity(score, timestep)
     logscore = -β * (
         (1 - weight) * discrepancy / score.discrepancy_scale -
@@ -299,13 +335,13 @@ function world_score_components(problem, timestep, coefficients, cache=Dict{Symb
     )
 end
 
-function world_logscore(problem, timestep, coefficients, cache=Dict{Symbol,Any}())
+function world_logscore(problem, timestep, candidate, cache=Dict{Symbol,Any}())
     score = problem.score
     weight = query_weight(score, timestep)
     discrepancy = weight < 1 ? kernel_discrepancy(
-        problem, timestep, coefficients, cache,
+        problem, timestep, candidate, cache,
     ) : 0.0
-    query = weight > 0 ? trajectory_query(problem, timestep, coefficients) : 0.0
+    query = weight > 0 ? trajectory_query(problem, timestep, candidate) : 0.0
     β = score.β_max * maturity(score, timestep)
     -β * (
         (1 - weight) * discrepancy / score.discrepancy_scale -
@@ -314,10 +350,8 @@ function world_logscore(problem, timestep, coefficients, cache=Dict{Symbol,Any}(
 end
 
 function world_logscore_gradient(
-    problem,
-    timestep,
-    coefficients,
-    cache;
+    problem::WorldInferenceProblem{EOFWorldInferenceContext},
+    timestep, coefficients, cache;
     finite_difference=1e-4,
 )
     timestep == 0 && return zeros(length(coefficients))
