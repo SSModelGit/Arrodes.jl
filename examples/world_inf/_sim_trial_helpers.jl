@@ -1,5 +1,6 @@
 using Arrodes: TrajectoryObservation, WorldInferenceContext,
     kernel_discrepancy, target_measure_mmd, world_result_comparison_panels
+using Arrodes.WorldInference: measure_discrepancy
 using LinearAlgebra: Diagonal, Symmetric, cholesky, dot, norm, tr
 using Plots: plot, plot!, twinx
 using SCRIBE: reconstruct_eof_field
@@ -147,7 +148,7 @@ function coefficient_recovery(
 end
 
 function construct_world_recovery_diagnostics_cache(
-    problem, observed, target_floor, n_particles; top_count=10
+    problem, observed, truth_measure, target_floor, n_particles; top_count=10
 )
     @unpack context, observations = problem
     @unpack model, prior_covariance = context
@@ -162,6 +163,12 @@ function construct_world_recovery_diagnostics_cache(
 
     p_count = min(top_count, n_particles)
     horizon = length(observations)
+    trajectory_mmd = let cache = Dict{Symbol,Any}()
+        [
+            measure_discrepancy(problem, timestep, truth_measure, cache)
+            for timestep in 1:horizon
+        ]
+    end
 
     # rmse/mmd plot diagnostics
     world_rmse = fill(NaN, p_count, horizon)
@@ -193,6 +200,7 @@ function construct_world_recovery_diagnostics_cache(
         :posterior_mmd => posterior_mmd,
 
         :behavioral_mmd => behavioral_mmd,
+        :trajectory_mmd => trajectory_mmd,
         :ess_history => ess_hist,
         :coefficient_spread => coeff_spread,
         :resampled => resampled,
@@ -332,7 +340,8 @@ function ranked_series_plot(times, values; title, ylabel, show_legend)
             color=colors[min(rank, length(colors))],
             linealpha=alpha,linewidth=(rank==1 ? 2.6 : 1.6),
             marker=:star5, markersize=(rank==1 ? 3.5 : 2.5),
-            markeralpha=alpha, markerstrokewidth=0, label="Rank $rank",
+            markeralpha=alpha, markerstrokewidth=0,
+            label=rank == 1 ? "Highest-weight particles" : false,
             legend=show_legend ? :topright : false
         )
     end
@@ -387,16 +396,16 @@ trial_curl_plot(trial, scenario, mission; aggregate=false) =
     )
 
 function plot_world_method_rmse(trial; show_legend=true)
-    @unpack elapsed_times, rmse_histories, prior_distance,
+    @unpack elapsed_times, rmse_histories, som_hull_distance,
         recovery_diagnostics = trial
-    trajectory_mmd = recovery_diagnostics[:behavioral_mmd]
+    trajectory_mmd = recovery_diagnostics[:trajectory_mmd]
     times = vcat(0.0, elapsed_times)
 
     panel = plot(
         times, rmse_histories[:EOF];
         color=:firebrick, linewidth=2.8, label="EOF posterior mean",
         xlabel="Elapsed time (s)", ylabel="Spatially weighted field RMSE",
-        title="d = $(round(prior_distance, digits=2))",
+        title="δSOM = $(round(som_hull_distance, digits=2)) prior σ",
         legend=show_legend ? :topright : false,
         left_margin=12Plots.mm, right_margin=18Plots.mm,
         top_margin=5Plots.mm, bottom_margin=10Plots.mm,
@@ -409,14 +418,14 @@ function plot_world_method_rmse(trial; show_legend=true)
         panel, [NaN], [NaN];
         color=:black, linestyle=:dash, linewidth=2.2,
         marker=:star5, markersize=3.5, markerstrokewidth=0,
-        label="Behavioral target discrepancy"
+        label="Observed-trajectory discrepancy"
     )
     plot!(
         twinx(panel), elapsed_times, trajectory_mmd;
         color=:black, linestyle=:dash, linewidth=2.2,
         marker=:star5, markersize=3.5, markerstrokewidth=0,
         label=false, legend=false, grid=false,
-        ylabel="Target-measure MMD²", right_margin=18Plots.mm
+        ylabel="Trajectory-to-target MMD²", right_margin=18Plots.mm
     )
 
     return panel
@@ -479,14 +488,11 @@ function plot_world_trial_reconstructions(
 
     columns = length(trials) == 1 ? 3 : 6
     rows = ceil(Int, length(panels) / columns)
-    source = first(trials)[:source] == :som_vertices ?
-        "SOM-vertex generating worlds" : "ROMS snapshot generating worlds"
-
     return plot(
         panels...;
         layout=(rows, columns),
         size=(600 * columns, 400 * rows + 100),
-        plot_title="$source: observed / EOF / SOM",
+        plot_title="Observed belief and finite / continuous reconstructions",
         plot_titlefontsize=20, titlefontsize=12,
         left_margin=5Plots.mm, right_margin=5Plots.mm,
         top_margin=4Plots.mm, bottom_margin=6Plots.mm
@@ -500,7 +506,7 @@ function plot_world_recovery_over_time(trial)
     world_panel = ranked_posterior_series_plot(
         elapsed_times, diagnostics[:world_rmse],
         diagnostics[:posterior_world_rmse];
-        title="World-model average RMSE",
+        title="World-belief recovery error",
         ylabel="Spatially weighted average field RMSE",
         posterior_label="Posterior expected field",
         show_legend=true
@@ -508,33 +514,34 @@ function plot_world_recovery_over_time(trial)
     target_panel = ranked_posterior_series_plot(
         elapsed_times, diagnostics[:target_rmse],
         diagnostics[:posterior_target_rmse];
-        title="Inferred target-field weighted RMSE",
+        title="Target-field recovery error",
         ylabel="Spatially weighted target field RMSE",
         posterior_label="Posterior expected target",
         show_legend=true
     )
 
-    behavioral_mmd_panel = plot(
-        elapsed_times, diagnostics[:behavioral_mmd];
+    trajectory_mmd_panel = plot(
+        elapsed_times, diagnostics[:trajectory_mmd];
         color=:black, linewidth=2.6, marker=:star5, markersize=3.5,
         markerstrokewidth=0, label=false, xlabel="Elapsed Time (s)",
-        ylabel="target-measure MMD²",
-        title="Target behavior's kernel discrepancy measure over time"
+        ylabel="Trajectory-to-target MMD²",
+        title="Observed trajectory vs. generating target"
     )
     particle_mmd_panel = ranked_posterior_series_plot(
         elapsed_times,
         diagnostics[:particle_mmd], diagnostics[:posterior_mmd];
-        title="Kernel discrepancy measure of inferred behavior over time",
+        title="Inferred target vs. generating target",
         ylabel="Target-measure MMD²",
         posterior_label="Posterior mixture",
         show_legend=true
     )
 
     plot(world_panel, target_panel,
-         behavioral_mmd_panel, particle_mmd_panel;
+         trajectory_mmd_panel, particle_mmd_panel;
          layout=(2, 2), size=(1700, 1150), titlefontsize=16,
          left_margin=12Plots.mm, right_margin=5Plots.mm,
          top_margin=5Plots.mm, bottom_margin=8Plots.mm,
-         plot_title="Trial $(trial[:trial]) world-model recovery over elapsed time"
+         plot_title="Continuous recovery over elapsed time " *
+             "(δSOM = $(round(trial[:som_hull_distance]; digits=2)) prior σ)"
    )
 end

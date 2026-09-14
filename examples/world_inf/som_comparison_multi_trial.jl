@@ -1,10 +1,10 @@
 using Arrodes: WorldInferenceProblem, calibrate_discrepancy_scale,
     eof_field_score, eof_target_field, infer_world,
     plot_world_result_comparison, plot_world_trial_particles,
-    save_world_inference_visualizations, save_world_result_comparison_animation,
-    world_inference_context
+    save_world_inference_visualizations, world_inference_context
 using JSON: parsefile
 using LinearAlgebra: BLAS, Symmetric, cholesky, norm
+using MAT: matread
 using Match: @match
 using Plots: plot, plot!, savefig
 using Random: MersenneTwister, randperm
@@ -177,7 +177,6 @@ function prepare_mission(mission)
         :spatial_weights => spatial_weights,
         :prior_covariance => prior_covariance,
     )
-
     target = eof_target_field(
         link=Symbol(mission[:target][:link]),
         floor=target_floor,
@@ -229,44 +228,6 @@ function prepare_mission(mission)
     )
 end
 
-function distinguish_worlds_by_distance(mission, scenario, candidates)
-    @unpack worlds_per_distance, snapshot_gap,
-        prior_sigma_distances = mission[:trials]
-    factor = cholesky(Symmetric(scenario[:prior_covariance])).L
-    prior = scenario[:eof_model].ϕ
-    distances = [
-        norm(factor \ (candidate[:coefficients] - prior))
-        for candidate in candidates
-    ]
-    available = trues(length(candidates))
-    worlds = Dict{Symbol,Any}[]
-
-    for target in prior_sigma_distances
-        for _ in 1:worlds_per_distance
-            remaining = findall(available)
-            selected = remaining[
-                argmin(abs.(distances[remaining] .- target))
-            ]
-            push!(worlds, merge(candidates[selected], Dict(
-                :requested_distance => Float64(target),
-                :actual_distance => distances[selected],
-            )))
-            available[selected] = false
-
-            if haskey(candidates[selected], :snapshot)
-                snapshot = candidates[selected][:snapshot]
-                for index in remaining
-                    if abs(candidates[index][:snapshot] - snapshot) < snapshot_gap
-                        available[index] = false
-                    end
-                end
-            end
-        end
-    end
-
-    worlds
-end
-
 function som_trial_worlds(mission, scenario)
     model = scenario[:som_model]
     candidates = [
@@ -281,37 +242,59 @@ function som_trial_worlds(mission, scenario)
         )
         for vertex in eachindex(model.data[:vertices])
     ]
-    distinguish_worlds_by_distance(mission, scenario, candidates)
+    factor = cholesky(Symmetric(scenario[:prior_covariance])).L
+    prior = scenario[:eof_model].ϕ
+    distances = [
+        norm(factor \ (candidate[:coefficients] - prior))
+        for candidate in candidates
+    ]
+    targets = range(
+        minimum(distances), maximum(distances);
+        length=mission[:trials][:worlds_per_level],
+    )
+    remaining = collect(eachindex(candidates))
+    selected = Int[]
+    for target in targets
+        index = remaining[argmin(abs.(distances[remaining] .- target))]
+        push!(selected, index)
+        filter!(!=(index), remaining)
+    end
+    [
+        merge(candidates[index], Dict(
+            :world_level => 1,
+            :actual_distance => distances[index],
+            :som_hull_distance => 0.0,
+        ))
+        for index in selected
+    ]
 end
 
 function roms_trial_worlds(mission, scenario)
-    model = scenario[:eof_model]
+    data = scenario[:world_space]
     roms = scenario[:roms]
-    snapshots = collect(scenario[:validation_start]:size(roms[:data], 2))
-    coefficients = eof_coefficients(
-        model.params,
-        view(roms[:data], :, snapshots),
+    snapshots = Int.(vec(data["selected_snapshot_ids"]))
+    levels = Int.(vec(data["selected_levels"]))
+    coefficients = data["selected_coefficients"]
+    distances = vec(data["selected_prior_distances"])
+    som_hull_distances = vec(data["selected_som_hull_distances"])
+    directions = read_roms_flow_directions(
+        scenario[:archive], roms, snapshots,
     )
-    candidates = [
+
+    [
         Dict(
             :source => :roms_snapshots,
             :snapshot => snapshots[index],
-            :field => Vector{Float64}(view(roms[:data], :, snapshots[index])),
+            :field => Vector{Float64}(view(
+                roms[:data], :, snapshots[index],
+            )),
+            :flow_directions => directions[snapshots[index]],
             :coefficients => Vector{Float64}(view(coefficients, :, index)),
+            :world_level => levels[index],
+            :actual_distance => distances[index],
+            :som_hull_distance => som_hull_distances[index],
         )
         for index in eachindex(snapshots)
-    ]
-    selected = distinguish_worlds_by_distance(mission, scenario, candidates)
-    directions = read_roms_flow_directions(
-        scenario[:archive],
-        roms,
-        getindex.(selected, :snapshot),
-    )
-    [
-        merge(world, Dict(
-            :flow_directions => directions[world[:snapshot]],
-        ))
-        for world in selected
     ]
 end
 
@@ -353,7 +336,7 @@ function run_trial(
         :field => world[:field],
     )
     diagnostics = keep_history ? construct_world_recovery_diagnostics_cache(
-        eof_problem, observed, scenario[:target_floor],
+        eof_problem, observed, density, scenario[:target_floor],
         mission[:filter][:particles]; top_count=10,
     ) : nothing
     seed = UInt64(mission[:trials][:seed]) + UInt64(2trial)
@@ -380,7 +363,8 @@ function run_trial(
     )
     summary = Dict(
         :prior_distance => world[:actual_distance],
-        :requested_distance => world[:requested_distance],
+        :world_level => world[:world_level],
+        :som_hull_distance => world[:som_hull_distance],
         :eof_final_rmse => weighted_rmse(
             eof_final_field, world[:field], scenario[:spatial_weights],
         ),
@@ -427,13 +411,13 @@ function run_trial(
 end
 
 function plot_final_rmse(trials)
-    targets = sort(unique(getindex.(trials, :requested_distance)))
+    targets = sort(unique(getindex.(trials, :world_level)))
     groups = [
-        filter(trial -> trial[:requested_distance] == target, trials)
+        filter(trial -> trial[:world_level] == target, trials)
         for target in targets
     ]
     distances = [
-        mean(getindex.(group, :prior_distance))
+        mean(getindex.(group, :som_hull_distance))
         for group in groups
     ]
     eof_rmse = [
@@ -444,13 +428,12 @@ function plot_final_rmse(trials)
         getindex.(group, :som_final_rmse)
         for group in groups
     ]
-
     panel = plot(
         distances, mean.(eof_rmse); yerror=std.(eof_rmse),
-        color=:firebrick, marker=:star5, markersize=7,
+        color=:firebrick, marker=:circle, markersize=7,
         markerstrokecolor=:firebrick, markerstrokewidth=0, linewidth=2.8,
         label="EOF posterior mean",
-        xlabel="Actual prior-whitened distance from mean world",
+        xlabel="Prior-whitened distance from SOM world space",
         ylabel="Final spatially weighted field RMSE",
         title="Final recovery (mean ± one standard deviation)",
         size=(1600, 900), legend=:topright,
@@ -461,11 +444,10 @@ function plot_final_rmse(trials)
 
     plot!(
         panel, distances, mean.(som_rmse);
-        yerror=std.(som_rmse), color=:steelblue, marker=:star5, markersize=7,
+        yerror=std.(som_rmse), color=:steelblue, marker=:circle, markersize=7,
         markerstrokecolor=:steelblue, markerstrokewidth=0, linewidth=2.8,
         label="SOM posterior mean",
     )
-
     return panel
 end
 
@@ -474,16 +456,11 @@ function save_trial_results(output, mission, scenario, trial)
 
     field_plot = trial_curl_plot(trial, scenario, mission)
     horizon = size(trial[:field_histories][:EOF], 2) - 1
-    frame_count = mission[:visualization][:animation_frames]
-    fps = mission[:visualization][:fps]
-    animate = mission[:visualization][:animate]
     labels = Dict(
         :EOF => "EOF posterior mean",
         :SOM => "SOM posterior mean",
     )
-    observed_title = trial[:source] == :som_vertices ?
-        "Observed SOM-vertex world and trajectory" :
-        "Observed ROMS-snapshot world and trajectory"
+    observed_title = "Observed-agent world belief and trajectory"
 
     comparison = plot_world_result_comparison(
         trial[:field_histories],
@@ -505,20 +482,6 @@ function save_trial_results(output, mission, scenario, trial)
         comparison,
         joinpath(output, "eof_som_posterior_comparison.png"),
     )
-
-    if animate
-        save_world_result_comparison_animation(
-            joinpath(output, "eof_som_posterior_comparison.gif"),
-            trial[:field_histories],
-            labels,
-            trial[:truth_field],
-            trial[:trajectory],
-            field_plot;
-            frame_count,
-            fps,
-            observed_title,
-        )
-    end
 
     rmse = plot_world_method_rmse(trial)
     plot!(
@@ -542,9 +505,8 @@ function save_trial_results(output, mission, scenario, trial)
         scenario[:prior_covariance],
         field_plot;
         diagnostics=trial[:recovery_diagnostics],
-        frame_count,
-        fps,
-        animate,
+        som_coefficients=scenario[:som_coefficients],
+        animate=false,
     )
     savefig(
         plot_world_recovery_over_time(trial),
@@ -559,9 +521,7 @@ function save_trial_results(output, mission, scenario, trial)
         trial[:trajectory],
         field_plot;
         truth_vertex=trial[:truth_vertex],
-        frame_count,
-        fps,
-        animate,
+        animate=false,
     )
 end
 
@@ -572,7 +532,11 @@ function save_source_results(
     mkpath(source_output)
 
     savefig(
-        plot_world_trial_reconstructions(displayed, scenario, mission),
+        plot_world_trial_reconstructions(
+            length(displayed) == 1 ? displayed : displayed[[1, end]],
+            scenario,
+            mission,
+        ),
         joinpath(source_output, "eof_som_world_reconstructions.png"),
     )
     savefig(
@@ -588,8 +552,9 @@ function save_source_results(
             displayed,
             scenario[:eof_model].ϕ,
             scenario[:prior_covariance],
+            scenario[:som_coefficients],
         ),
-        joinpath(source_output, "eof_particle_locations.png"),
+        joinpath(source_output, "eof_som_particle_locations.png"),
     )
 
     for trial in displayed
@@ -619,7 +584,7 @@ function run_source(
         "roms_snapshots" => roms_trial_worlds(mission, scenario)
         "som_vertices" => som_trial_worlds(mission, scenario)
     end
-    worlds_per_distance = mission[:trials][:worlds_per_distance]
+    worlds_per_level = mission[:trials][:worlds_per_level]
     start_count = mission[:trials][:trajectories_per_world]
     trials = Dict{Symbol,Any}[]
     displayed = Dict{Symbol,Any}[]
@@ -636,8 +601,8 @@ function run_source(
                 "Running $source trial $trial/" *
                 "$(length(worlds) * start_count)"
             )
-            keep_history = (world_index - 1) % worlds_per_distance == 0 &&
-                start_index == 1
+            keep_history = source == "som_vertices" ||
+                ((world_index - 1) % worlds_per_level == 0 && start_index == 1)
             result = run_trial(
                 mission,
                 scenario,
@@ -649,8 +614,9 @@ function run_source(
                 keep_history=keep_history,
             )
             push!(trials, Dict(
-                :requested_distance => result[:requested_distance],
+                :world_level => result[:world_level],
                 :prior_distance => result[:prior_distance],
+                :som_hull_distance => result[:som_hull_distance],
                 :eof_final_rmse => result[:eof_final_rmse],
                 :som_final_rmse => result[:som_final_rmse],
             ))
@@ -687,6 +653,12 @@ function main(mission_path=nothing)
 
     prepared = prepare_mission(mission)
     @unpack mission, scenario, scores, proposal = prepared
+    if run_roms
+        world_space_path = normpath(joinpath(
+            @__DIR__, mission[:world_space_data],
+        ))
+        scenario[:world_space] = matread(world_space_path)
+    end
 
     output = normpath(joinpath(@__DIR__, mission[:rel_output_path]))
     mkpath(output)

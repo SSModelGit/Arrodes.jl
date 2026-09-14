@@ -235,6 +235,7 @@ function particle_projection(
     truth,
     prior_mean,
     prior_covariance,
+    som_coefficients=nothing,
 )
     factor = cholesky(Symmetric(prior_covariance)).L
     whiten(vector) = factor \ (vector - prior_mean)
@@ -259,12 +260,16 @@ function particle_projection(
     d₂ ./= max(norm(d₂), eps(Float64))
     dot(d₂, posterior) < 0 && (d₂ .*= -1)
     coordinates(particles) = hcat(vec(d₁' * particles), vec(d₂' * particles))
-    Dict(
+    projection = Dict(
         :initial => coordinates(initial),
         :final => coordinates(final),
         :truth => [dot(d₁, truth_whitened), dot(d₂, truth_whitened)],
         :posterior => [dot(d₁, posterior), dot(d₂, posterior)],
     )
+    if !isnothing(som_coefficients)
+        projection[:som_vertices] = coordinates(whiten(som_coefficients))
+    end
+    projection
 end
 
 function plot_world_particle_distribution(
@@ -272,12 +277,15 @@ function plot_world_particle_distribution(
     truth,
     prior_mean,
     prior_covariance,
+    som_coefficients=nothing,
+    som_probabilities=nothing,
 )
     projection = particle_projection(
         result,
         truth,
         prior_mean,
         prior_covariance,
+        som_coefficients,
     )
     initial = projection[:initial]
     final = projection[:final]
@@ -304,6 +312,25 @@ function plot_world_particle_distribution(
         alpha=0.55,
         label="final particles",
     )
+    if haskey(projection, :som_vertices)
+        vertices = projection[:som_vertices]
+        vertex_sizes = isnothing(som_probabilities) ? 6 :
+            4 .+ 8 .* sqrt.(som_probabilities ./ max(
+                maximum(som_probabilities), eps(Float64),
+            ))
+        scatter!(
+            panel,
+            vertices[:, 1],
+            vertices[:, 2];
+            marker=:utriangle,
+            color=:steelblue,
+            markersize=vertex_sizes,
+            alpha=0.9,
+            markerstrokecolor=:navy,
+            markerstrokewidth=1.0,
+            label="SOM vertices",
+        )
+    end
     scatter!(panel, [0.0], [0.0]; marker=:diamond, color=:orange,
              markersize=8, label="ego prior")
     scatter!(panel, [projection[:truth][1]], [projection[:truth][2]];
@@ -322,6 +349,7 @@ function plot_world_particle_health(
     prior_mean,
     prior_covariance,
     diagnostics,
+    som_coefficients=nothing,
 )
     horizon = length(diagnostics[:behavioral_mmd])
     timesteps = 1:horizon
@@ -358,6 +386,7 @@ function plot_world_particle_health(
         truth,
         prior_mean,
         prior_covariance,
+        som_coefficients,
     )
     plot(ess, spread, recovery, particles; layout=(2, 2), size=(1600, 1100))
 end
@@ -373,6 +402,7 @@ function save_world_inference_visualizations(
     prior_covariance,
     field_plot;
     diagnostics,
+    som_coefficients=nothing,
     frame_count=80,
     fps=8,
     animate=true
@@ -405,6 +435,7 @@ function save_world_inference_visualizations(
             truth,
             prior_mean,
             prior_covariance,
+            som_coefficients,
         ),
         joinpath(output, "particle_distribution.png"),
     )
@@ -416,6 +447,7 @@ function save_world_inference_visualizations(
             prior_mean,
             prior_covariance,
             diagnostics,
+            som_coefficients,
         ),
         joinpath(output, "particle_health.png"),
     )
@@ -577,17 +609,30 @@ function plot_world_trial_recovery(trials)
     end
 end
 
-function plot_world_trial_particles(trials, prior_mean, prior_covariance)
+function plot_world_trial_particles(
+    trials, prior_mean, prior_covariance, som_coefficients=nothing,
+)
     panels = [begin
         panel = plot_world_particle_distribution(
             trial[:result],
             trial[:truth_coefficients],
             prior_mean,
             prior_covariance,
+            som_coefficients,
+            haskey(trial, :som_result) ? view(
+                trial[:som_result].posterior_probabilities, :, size(
+                    trial[:som_result].posterior_probabilities, 2,
+                ),
+            ) : nothing,
         )
+        title = ""
+        if !isnothing(som_coefficients)
+            title = "δSOM = " *
+                "$(round(trial[:som_hull_distance]; digits=2)) prior σ"
+        end
         plot!(
             panel;
-            title="trial $(trial[:trial])",
+            title,
             legend=index == 1 ? :topright : false,
             xlabel=index > 5 ? "ego→observed (prior σ)" : "",
             ylabel=index in (1, 6) ? "orthogonal (prior σ)" : "",
@@ -601,7 +646,9 @@ function plot_world_trial_particles(trials, prior_mean, prior_covariance)
         panels...;
         layout=(2, 5),
         size=(3000, 1300),
-        plot_title="Initial and final particles in each trial's prior-whitened plane",
+        plot_title=isnothing(som_coefficients) ?
+            "Initial and final particles in each trial's prior-whitened plane" :
+            "Behavior-conditioned posteriors in the shared prior-whitened world space",
         plot_titlefontsize=14,
     )
 end
