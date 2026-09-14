@@ -431,22 +431,22 @@ function plot_final_rmse(trials)
     panel = plot(
         distances, mean.(eof_rmse); yerror=std.(eof_rmse),
         color=:firebrick, marker=:circle, markersize=7,
-        markerstrokecolor=:firebrick, markerstrokewidth=0, linewidth=2.8,
-        label="EOF posterior mean",
-        xlabel="Prior-whitened distance from SOM world space",
-        ylabel="Final spatially weighted field RMSE",
-        title="Final recovery (mean ± one standard deviation)",
-        size=(1600, 900), legend=:topright,
-        left_margin=18Plots.mm, right_margin=8Plots.mm,
-        top_margin=6Plots.mm, bottom_margin=14Plots.mm,
-        titlefontsize=20, guidefontsize=16, tickfontsize=13, legendfontsize=13,
+        markerstrokecolor=:firebrick, markerstrokewidth=0, linewidth=3.2,
+        label="Continuous EOF",
+        xlabel="Prior-whitened distance from the SOM region",
+        ylabel="Final field RMSE",
+        size=(1500, 820), legend=:topleft,
+        left_margin=16Plots.mm, right_margin=6Plots.mm,
+        top_margin=5Plots.mm, bottom_margin=12Plots.mm,
+        guidefontsize=16, tickfontsize=13, legendfontsize=13,
     )
 
     plot!(
         panel, distances, mean.(som_rmse);
-        yerror=std.(som_rmse), color=:steelblue, marker=:circle, markersize=7,
-        markerstrokecolor=:steelblue, markerstrokewidth=0, linewidth=2.8,
-        label="SOM posterior mean",
+        yerror=std.(som_rmse), color=:steelblue, marker=:utriangle,
+        markersize=8, markerstrokecolor=:steelblue,
+        markerstrokewidth=0, linewidth=3.2, linestyle=:dash,
+        label="Finite SOM",
     )
     return panel
 end
@@ -533,7 +533,7 @@ function save_source_results(
 
     savefig(
         plot_world_trial_reconstructions(
-            length(displayed) == 1 ? displayed : displayed[[1, end]],
+            displayed,
             scenario,
             mission,
         ),

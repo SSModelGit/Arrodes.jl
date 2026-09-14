@@ -627,29 +627,36 @@ function plot_world_trial_particles(
         )
         title = ""
         if !isnothing(som_coefficients)
-            title = "δSOM = " *
-                "$(round(trial[:som_hull_distance]; digits=2)) prior σ"
+            title = "Distance from SOM region: " *
+                "$(round(trial[:som_hull_distance]; digits=2)) prior s.d."
         end
         plot!(
             panel;
             title,
-            legend=index == 1 ? :topright : false,
-            xlabel=index > 5 ? "ego→observed (prior σ)" : "",
-            ylabel=index in (1, 6) ? "orthogonal (prior σ)" : "",
-            titlefontsize=10,
-            guidefontsize=8,
-            tickfontsize=7,
+            legend=index == 1 ? :topleft : false,
+            xlabel=index > length(trials) - min(5, length(trials)) ?
+                "Prior-to-generating direction (prior s.d.)" : "",
+            ylabel=(index - 1) % 5 == 0 ?
+                "Orthogonal direction (prior s.d.)" : "",
+            titlefontsize=14,
+            guidefontsize=12,
+            tickfontsize=10,
+            legendfontsize=9,
+            left_margin=(index - 1) % 5 == 0 ? 10Plots.mm : 4Plots.mm,
+            right_margin=5Plots.mm,
+            top_margin=5Plots.mm,
+            bottom_margin=index > length(trials) - min(5, length(trials)) ?
+                15Plots.mm : 4Plots.mm,
         )
         panel
     end for (index, trial) in enumerate(trials)]
+    columns = min(5, length(panels))
+    rows = ceil(Int, length(panels) / columns)
     plot(
         panels...;
-        layout=(2, 5),
-        size=(3000, 1300),
-        plot_title=isnothing(som_coefficients) ?
-            "Initial and final particles in each trial's prior-whitened plane" :
-            "Behavior-conditioned posteriors in the shared prior-whitened world space",
-        plot_titlefontsize=14,
+        layout=(rows, columns),
+        size=(620 * columns, 520 * rows),
+        dpi=180,
     )
 end
 

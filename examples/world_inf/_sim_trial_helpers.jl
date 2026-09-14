@@ -331,39 +331,38 @@ function ranked_series_plot(times, values; title, ylabel, show_legend)
         "#000000", "#303030", "#484848", "#606060", "#787878",
         "#909090", "#a0a0a0", "#b0b0b0", "#c0c0c0", "#d0d0d0",
     ]
-    panel = plot(; xlabel="Elapsed Time (s)", ylabel, title)
+    panel = plot(; xlabel="Elapsed time (s)", ylabel, title)
 
     for rank in count:-1:1
         alpha = count == 1 ? 1.0 : 1.0-0.7*(rank-1) / (count-1)
         plot!(
             panel, times, view(values, rank, :);
             color=colors[min(rank, length(colors))],
-            linealpha=alpha,linewidth=(rank==1 ? 2.6 : 1.6),
+            linealpha=alpha, linewidth=(rank==1 ? 2.6 : 1.6),
             marker=:star5, markersize=(rank==1 ? 3.5 : 2.5),
             markeralpha=alpha, markerstrokewidth=0,
-            label=rank == 1 ? "Highest-weight particles" : false,
-            legend=show_legend ? :topright : false
+            label="Rank $rank",
+            legend=show_legend ? :topright : false,
         )
     end
-    return panel
+    panel
 end
 
 function ranked_posterior_series_plot(
     times, ranked_history, posterior_history;
-    title, ylabel, posterior_label, show_legend
+    title, ylabel, posterior_label, show_legend,
 )
     panel = ranked_series_plot(
         times, ranked_history;
-        title=title, ylabel=ylabel, show_legend=show_legend
+        title, ylabel, show_legend,
     )
     plot!(
         panel, times, posterior_history;
         color=:red, linewidth=2.8,
         marker=:star5, markersize=5, markerstrokewidth=0,
-        label=posterior_label, legend=show_legend ? :topright : false
+        label=posterior_label, legend=show_legend ? :topright : false,
     )
-
-    return panel
+    panel
 end
 
 function plot_trial_curl_field(
@@ -403,47 +402,70 @@ function plot_world_method_rmse(trial; show_legend=true)
 
     panel = plot(
         times, rmse_histories[:EOF];
-        color=:firebrick, linewidth=2.8, label="EOF posterior mean",
-        xlabel="Elapsed time (s)", ylabel="Spatially weighted field RMSE",
-        title="δSOM = $(round(som_hull_distance, digits=2)) prior σ",
+        color=:firebrick, linewidth=3.0,
+        marker=:circle, markersize=2.8, markerstrokewidth=0,
+        label="Continuous EOF",
+        xlabel="Elapsed time (s)", ylabel="Field RMSE",
+        title="Distance from SOM region: " *
+            "$(round(som_hull_distance, digits=2)) prior s.d.",
         legend=show_legend ? :topright : false,
-        left_margin=12Plots.mm, right_margin=18Plots.mm,
-        top_margin=5Plots.mm, bottom_margin=10Plots.mm,
+        left_margin=12Plots.mm, right_margin=20Plots.mm,
+        top_margin=7Plots.mm, bottom_margin=10Plots.mm,
     )
     plot!(
         panel, times, rmse_histories[:SOM];
-        color=:steelblue, linewidth=2.8, label="SOM posterior mean"
+        color=:steelblue, linewidth=3.0, linestyle=:dash,
+        marker=:utriangle, markersize=3.2, markerstrokewidth=0,
+        label="Finite SOM"
     )
     plot!(
         panel, [NaN], [NaN];
-        color=:black, linestyle=:dash, linewidth=2.2,
+        color=:black, linestyle=:dot, linewidth=2.4,
         marker=:star5, markersize=3.5, markerstrokewidth=0,
-        label="Observed-trajectory discrepancy"
+        label="Trajectory discrepancy"
     )
     plot!(
         twinx(panel), elapsed_times, trajectory_mmd;
-        color=:black, linestyle=:dash, linewidth=2.2,
+        color=:black, linestyle=:dot, linewidth=2.4,
         marker=:star5, markersize=3.5, markerstrokewidth=0,
         label=false, legend=false, grid=false,
-        ylabel="Trajectory-to-target MMD²", right_margin=18Plots.mm
+        ylabel="Trajectory-to-target MMD²", right_margin=20Plots.mm
     )
 
     return panel
 end
 
 function plot_ten_trial_rmse_histories(trials)
-    panels = [
-        plot_world_method_rmse(trial; show_legend=index==1)
-        for (index, trial) in enumerate(trials)
-    ]
+    panels = [begin
+        panel = plot_world_method_rmse(trial; show_legend=index==1)
+        number = lpad(trial[:trial], 2, '0')
+        title = "Trial $number — distance " *
+            "$(round(trial[:som_hull_distance]; digits=2))"
+        plot!(
+            panel[1];
+            title,
+            xlabel=index > length(trials) - 2 ? "Elapsed time (s)" : "",
+            ylabel=isodd(index) ? "Field RMSE" : "",
+        )
+        plot!(
+            panel[2];
+            ylabel=iseven(index) ? "Trajectory discrepancy (MMD²)" : "",
+        )
+        panel
+    end for (index, trial) in enumerate(trials)]
 
     time_limit = maximum(last(trial[:elapsed_times]) for trial in trials)
     rmse_limit = 1.05 * maximum(
         maximum(history) for trial in trials for history in values(trial[:rmse_histories])
     )
+    discrepancy_limit = 1.05 * maximum(
+        maximum(trial[:recovery_diagnostics][:trajectory_mmd])
+        for trial in trials
+    )
     for panel in panels
         plot!(panel; xlims=(0.0, time_limit))
         plot!(panel[1]; ylims=(0.0, rmse_limit))
+        plot!(panel[2]; ylims=(0.0, discrepancy_limit))
     end
 
     columns = min(2, length(trials))
@@ -452,9 +474,9 @@ function plot_ten_trial_rmse_histories(trials)
     return plot(
         panels...;
         layout=(rows, columns),
-        size=(1000 * columns, 480 * rows + 80),
-        plot_title="EOF and SOM field recovery across trials",
-        plot_titlefontsize=20, titlefontsize=12, guidefontsize=10, tickfontsize=9,
+        size=(950 * columns, 520 * rows), dpi=180,
+        titlefontsize=18, guidefontsize=16,
+        tickfontsize=14, legendfontsize=12,
     )
 end
 
@@ -506,26 +528,26 @@ function plot_world_recovery_over_time(trial)
     world_panel = ranked_posterior_series_plot(
         elapsed_times, diagnostics[:world_rmse],
         diagnostics[:posterior_world_rmse];
-        title="World-belief recovery error",
+        title="World-model average RMSE",
         ylabel="Spatially weighted average field RMSE",
         posterior_label="Posterior expected field",
-        show_legend=true
+        show_legend=true,
     )
     target_panel = ranked_posterior_series_plot(
         elapsed_times, diagnostics[:target_rmse],
         diagnostics[:posterior_target_rmse];
-        title="Target-field recovery error",
+        title="Inferred target-field weighted RMSE",
         ylabel="Spatially weighted target field RMSE",
         posterior_label="Posterior expected target",
-        show_legend=true
+        show_legend=true,
     )
 
     trajectory_mmd_panel = plot(
         elapsed_times, diagnostics[:trajectory_mmd];
         color=:black, linewidth=2.6, marker=:star5, markersize=3.5,
-        markerstrokewidth=0, label=false, xlabel="Elapsed Time (s)",
+        markerstrokewidth=0, label=false, xlabel="Elapsed time (s)",
         ylabel="Trajectory-to-target MMD²",
-        title="Observed trajectory vs. generating target"
+        title="Observed trajectory vs. generating target",
     )
     particle_mmd_panel = ranked_posterior_series_plot(
         elapsed_times,
@@ -533,15 +555,17 @@ function plot_world_recovery_over_time(trial)
         title="Inferred target vs. generating target",
         ylabel="Target-measure MMD²",
         posterior_label="Posterior mixture",
-        show_legend=true
+        show_legend=true,
     )
 
-    plot(world_panel, target_panel,
-         trajectory_mmd_panel, particle_mmd_panel;
-         layout=(2, 2), size=(1700, 1150), titlefontsize=16,
-         left_margin=12Plots.mm, right_margin=5Plots.mm,
-         top_margin=5Plots.mm, bottom_margin=8Plots.mm,
-         plot_title="Continuous recovery over elapsed time " *
-             "(δSOM = $(round(trial[:som_hull_distance]; digits=2)) prior σ)"
-   )
+    plot(
+        world_panel, target_panel, trajectory_mmd_panel, particle_mmd_panel;
+        layout=(2, 2), size=(1700, 1150), dpi=180,
+        titlefontsize=16, guidefontsize=12,
+        tickfontsize=10, legendfontsize=9,
+        left_margin=12Plots.mm, right_margin=5Plots.mm,
+        top_margin=5Plots.mm, bottom_margin=8Plots.mm,
+        plot_title="Trial $(trial[:trial]) world-model recovery over elapsed time",
+        plot_titlefontsize=18,
+    )
 end
