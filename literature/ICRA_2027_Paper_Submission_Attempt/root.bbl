@@ -1,0 +1,165 @@
+\begin{thebibliography}{10}
+\providecommand{\url}[1]{#1}
+\csname url@rmstyle\endcsname
+\providecommand{\newblock}{\relax}
+\providecommand{\bibinfo}[2]{#2}
+\providecommand\BIBentrySTDinterwordspacing{\spaceskip=0pt\relax}
+\providecommand\BIBentryALTinterwordstretchfactor{4}
+\providecommand\BIBentryALTinterwordspacing{\spaceskip=\fontdimen2\font plus
+\BIBentryALTinterwordstretchfactor\fontdimen3\font minus
+  \fontdimen4\font\relax}
+\providecommand\BIBforeignlanguage[2]{{%
+\expandafter\ifx\csname l@#1\endcsname\relax
+\typeout{** WARNING: IEEEtran.bst: No hyphenation pattern has been}%
+\typeout{** loaded for the language `#1'. Using the pattern for}%
+\typeout{** the default language instead.}%
+\else
+\language=\csname l@#1\endcsname
+\fi
+#2}}
+
+\bibitem{hollinger2012underwater}
+G.~A. Hollinger, S.~Choudhary, P.~Qarabaqi, C.~Murphy, U.~Mitra, G.~S.
+  Sukhatme, M.~Stojanovic, H.~Singh, and F.~Hover, ``Underwater data collection
+  using robotic sensor networks,'' \emph{IEEE Journal on Selected Areas in
+  Communications}, vol.~30, no.~5, pp. 899--911, 2012.
+
+\bibitem{binney2010informative}
+J.~Binney, A.~Krause, and G.~S. Sukhatme, ``Informative path planning for an
+  autonomous underwater vehicle,'' in \emph{2010 IEEE International Conference
+  on Robotics and Automation}, 2010, pp. 4791--4796.
+
+\bibitem{miller2016ergodic}
+L.~M. Miller, Y.~Silverman, M.~A. MacIver, and T.~D. Murphey, ``Ergodic
+  exploration of distributed information,'' \emph{IEEE Transactions on
+  Robotics}, vol.~32, no.~1, pp. 36--52, 2016.
+
+\bibitem{dressel2018optimality}
+L.~Dressel and M.~J. Kochenderfer, ``On the optimality of ergodic trajectories
+  for information gathering tasks,'' in \emph{2018 Annual American Control
+  Conference}, 2018, pp. 1855--1861.
+
+\bibitem{bramblett2023epistemic}
+L.~Bramblett and N.~Bezzo, ``Epistemic planning for multi-robot systems in
+  communication-restricted environments,'' \emph{Frontiers in Robotics and AI},
+  vol.~10, p. 1149439, 2023.
+
+\bibitem{mathew2011ergodicity}
+G.~Mathew and I.~Mezi{\'c}, ``Metrics for ergodicity and design of ergodic
+  dynamics for multi-agent systems,'' \emph{Physica D: Nonlinear Phenomena},
+  vol. 240, no. 4--5, pp. 432--442, 2011.
+
+\bibitem{abraham2018decentralized}
+I.~Abraham and T.~D. Murphey, ``Decentralized ergodic control:
+  Distribution-driven sensing and exploration for multi-agent systems,''
+  \emph{IEEE Robotics and Automation Letters}, vol.~3, no.~4, pp. 2987--2994,
+  2018.
+
+\bibitem{delatorre2016stochastic}
+G.~De~La~Torre, K.~Fla{\ss}kamp, A.~Prabhakar, and T.~D. Murphey, ``Ergodic
+  exploration with stochastic sensor dynamics,'' in \emph{2016 American Control
+  Conference}, 2016, pp. 2971--2976.
+
+\bibitem{hughes2026motionfields}
+C.~Hughes, Y.~Liu, Y.~Lahrach, J.~Engdahl, H.~Warren, D.~Lee, F.~Ramos,
+  T.~Miles, and I.~Abraham, ``Asymptotically optimal ergodic coverage on
+  generalized motion fields,'' in \emph{Proceedings of Robotics: Science and
+  Systems}, 2026.
+
+\bibitem{garg2021iq}
+D.~Garg, S.~Chakraborty, C.~Cundy, J.~Song, and S.~Ermon, ``Iq-learn: Inverse
+  soft-q learning for imitation,'' \emph{Advances in Neural Information
+  Processing Systems}, vol.~34, pp. 4028--4039, 2021.
+
+\bibitem{mai2024inverse}
+T.~Mai, T.~Nguyen, \emph{et~al.}, ``Inverse factorized soft q-learning for
+  cooperative multi-agent imitation learning,'' \emph{Advances in Neural
+  Information Processing Systems}, vol.~37, pp. 27\,178--27\,206, 2024.
+
+\bibitem{baker2009action}
+C.~L. Baker, R.~Saxe, and J.~B. Tenenbaum, ``Action understanding as inverse
+  planning,'' \emph{Cognition}, vol. 113, no.~3, pp. 329--349, 2009.
+
+\bibitem{ramirez2010probabilistic}
+M.~Ram{\'\i}rez and H.~Geffner, ``Probabilistic plan recognition using
+  off-the-shelf classical planners,'' in \emph{Proceedings of the AAAI
+  conference on artificial intelligence}, vol.~24, 2010, pp. 1121--1126.
+
+\bibitem{zhixuan2020sips}
+T.~Zhi-Xuan, J.~L. Mann, T.~Silver, J.~B. Tenenbaum, and V.~K. Mansinghka,
+  ``Online bayesian goal inference for boundedly-rational planning agents,''
+  \emph{Advances in Neural Information Processing Systems}, vol.~33, 2020.
+
+\bibitem{han2018intentional}
+Y.~Han and P.~J. Gmytrasiewicz, ``Learning others' intentional models in
+  multi-agent settings using interactive pomdps,'' in \emph{Advances in Neural
+  Information Processing Systems}, vol.~31, 2018.
+
+\bibitem{jarrett2021inverse}
+D.~Jarrett, A.~H{\"u}y{\"u}k, and M.~van~der Schaar, ``Inverse decision
+  modeling: Learning interpretable representations of behavior,'' in
+  \emph{Proceedings of the 38th International Conference on Machine Learning},
+  ser. Proceedings of Machine Learning Research, vol. 139, 2021, pp.
+  4755--4771.
+
+\bibitem{huyuk2022inverse}
+A.~H{\"u}y{\"u}k, D.~Jarrett, and M.~van~der Schaar, ``Inverse contextual
+  bandits: Learning how behavior evolves over time,'' in \emph{Proceedings of
+  the 39th International Conference on Machine Learning}, ser. Proceedings of
+  Machine Learning Research, vol. 162, 2022, pp. 9506--9524.
+
+\bibitem{zhu2026belief}
+Y.~Zhu, S.~Katt, and S.~Kaski, ``More than irrational: Modeling belief-biased
+  agents,'' in \emph{Proceedings of the AAAI Conference on Artificial
+  Intelligence}, vol.~40, 2026, pp. 29\,948--29\,956.
+
+\bibitem{muglich2022generalized}
+D.~Muglich, L.~M. Zintgraf, C.~A.~S. de~Witt, S.~Whiteson, and J.~Foerster,
+  ``Generalized beliefs for cooperative ai,'' in \emph{Proceedings of the 39th
+  International Conference on Machine Learning}, ser. Proceedings of Machine
+  Learning Research, vol. 162, 2022, pp. 16\,062--16\,082.
+
+\bibitem{zhang2023adaptation}
+Y.~Zhang and B.~Williams, ``Adaptation and communication in human-robot teaming
+  to handle discrepancies in agents’ beliefs about plans,'' in
+  \emph{Proceedings of the International Conference on Automated Planning and
+  Scheduling}, vol.~33, 2023, pp. 462--471.
+
+\bibitem{angelov2021explainable}
+P.~P. Angelov, E.~A. Soares, R.~Jiang, N.~I. Arnold, and P.~M. Atkinson,
+  ``Explainable artificial intelligence: an analytical review,'' \emph{Wiley
+  Interdisciplinary Reviews: Data Mining and Knowledge Discovery}, vol.~11,
+  no.~5, p. e1424, 2021.
+
+\bibitem{mccammon2024som}
+S.~McCammon, Y.~Jia, and W.~G. Zhang, ``Predicting time-varying flow fields
+  using sparse observations with self-organizing maps,'' in \emph{2024 IEEE/OES
+  Autonomous Underwater Vehicles Symposium (AUV)}, 2024.
+
+\bibitem{scribe2026}
+{Anonymous}, ``{SCRIBE},'' 2026, manuscript under review.
+
+\bibitem{lew2023smcp3}
+A.~K. Lew, G.~Matheos, T.~Zhi-Xuan, M.~Ghavamizadeh, N.~Gothoskar, S.~Russell,
+  and V.~K. Mansinghka, ``{SMCP3}: Sequential monte carlo with probabilistic
+  program proposals,'' in \emph{Proceedings of the 26th International
+  Conference on Artificial Intelligence and Statistics}, ser. Proceedings of
+  Machine Learning Research, vol. 206, 2023, pp. 7061--7088.
+
+\bibitem{gretton2012mmd}
+A.~Gretton, K.~M. Borgwardt, M.~J. Rasch, B.~Sch{\"o}lkopf, and A.~Smola, ``A
+  kernel two-sample test,'' \emph{Journal of Machine Learning Research},
+  vol.~13, no.~25, pp. 723--773, 2012.
+
+\bibitem{cusumano2019gen}
+M.~F. Cusumano-Towner, F.~A. Saad, A.~K. Lew, and V.~K. Mansinghka, ``Gen: a
+  general-purpose probabilistic programming system with programmable
+  inference,'' in \emph{Proceedings of the 40th acm sigplan conference on
+  programming language design and implementation}, 2019, pp. 221--236.
+
+\bibitem{shchepetkin2005roms}
+A.~F. Shchepetkin and J.~C. McWilliams, ``The regional oceanic modeling system:
+  A split-explicit, free-surface, topography-following-coordinate ocean
+  model,'' \emph{Ocean Modelling}, vol.~9, no.~4, pp. 347--404, 2005.
+
+\end{thebibliography}

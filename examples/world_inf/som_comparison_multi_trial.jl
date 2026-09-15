@@ -433,12 +433,12 @@ function plot_final_rmse(trials)
         color=:firebrick, marker=:circle, markersize=7,
         markerstrokecolor=:firebrick, markerstrokewidth=0, linewidth=3.2,
         label="Continuous EOF",
-        xlabel="Prior-whitened distance from the SOM region",
+        xlabel="Distance from SOM region (prior s.d.)",
         ylabel="Final field RMSE",
-        size=(1500, 820), legend=:topleft,
+        size=(850, 600), legend=:topleft,
         left_margin=16Plots.mm, right_margin=6Plots.mm,
         top_margin=5Plots.mm, bottom_margin=12Plots.mm,
-        guidefontsize=16, tickfontsize=13, legendfontsize=13,
+        guidefontsize=23, tickfontsize=20, legendfontsize=20,
     )
 
     plot!(

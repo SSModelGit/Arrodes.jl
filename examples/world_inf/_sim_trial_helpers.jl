@@ -2,7 +2,7 @@ using Arrodes: TrajectoryObservation, WorldInferenceContext,
     kernel_discrepancy, target_measure_mmd, world_result_comparison_panels
 using Arrodes.WorldInference: measure_discrepancy
 using LinearAlgebra: Diagonal, Symmetric, cholesky, dot, norm, tr
-using Plots: plot, plot!, twinx
+using Plots: grid, plot, plot!, twinx
 using SCRIBE: reconstruct_eof_field
 using SCRIBE.ROMSTools: plot_roms_curl, wet_grid_locations
 using Statistics: mean
@@ -436,20 +436,26 @@ function plot_world_method_rmse(trial; show_legend=true)
 end
 
 function plot_ten_trial_rmse_histories(trials)
+    columns = min(5, length(trials))
+    rows = ceil(Int, length(trials) / columns)
     panels = [begin
-        panel = plot_world_method_rmse(trial; show_legend=index==1)
-        number = lpad(trial[:trial], 2, '0')
-        title = "Trial $number — distance " *
+        panel = plot_world_method_rmse(trial; show_legend=false)
+        title = "δSOM = " *
             "$(round(trial[:som_hull_distance]; digits=2))"
         plot!(
             panel[1];
             title,
-            xlabel=index > length(trials) - 2 ? "Elapsed time (s)" : "",
-            ylabel=isodd(index) ? "Field RMSE" : "",
+            xlabel=index > (rows - 1) * columns ? "Elapsed time (s)" : "",
+            ylabel=(index - 1) % columns == 0 ? "Field RMSE" : "",
+            left_margin=(index - 1) % columns == 0 ? 14Plots.mm : 3Plots.mm,
+            right_margin=index % columns == 0 ? 16Plots.mm : 3Plots.mm,
+            top_margin=5Plots.mm,
+            bottom_margin=index > (rows - 1) * columns ? 14Plots.mm : 6Plots.mm,
         )
         plot!(
             panel[2];
-            ylabel=iseven(index) ? "Trajectory discrepancy (MMD²)" : "",
+            ylabel=index % columns == 0 ? "Trajectory MMD²" : "",
+            right_margin=index % columns == 0 ? 16Plots.mm : 3Plots.mm,
         )
         panel
     end for (index, trial) in enumerate(trials)]
@@ -463,20 +469,28 @@ function plot_ten_trial_rmse_histories(trials)
         for trial in trials
     )
     for panel in panels
-        plot!(panel; xlims=(0.0, time_limit))
+        plot!(panel; xlims=(0.0, time_limit), xticks=0:20:time_limit)
         plot!(panel[1]; ylims=(0.0, rmse_limit))
         plot!(panel[2]; ylims=(0.0, discrepancy_limit))
     end
 
-    columns = min(2, length(trials))
-    rows = ceil(Int, length(trials) / columns)
+    legend_panel = plot(; framestyle=:none, axis=false, grid=false,
+        legend=:top, legend_columns=3)
+    for (label, color, marker, style) in (
+        ("Continuous EOF", :firebrick, :circle, :solid),
+        ("Finite SOM", :steelblue, :utriangle, :dash),
+        ("Trajectory MMD² (right)", :black, :star5, :dot),
+    )
+        plot!(legend_panel, [NaN], [NaN]; label, color, marker,
+            linestyle=style, linewidth=2, markerstrokewidth=0)
+    end
 
     return plot(
-        panels...;
-        layout=(rows, columns),
-        size=(950 * columns, 520 * rows), dpi=180,
-        titlefontsize=18, guidefontsize=16,
-        tickfontsize=14, legendfontsize=12,
+        legend_panel, panels...;
+        layout=Plots.@layout([a{0.10h}; grid(rows, columns)]),
+        size=(320 * columns, 380 * rows + 40), dpi=180,
+        titlefontsize=19, guidefontsize=17,
+        tickfontsize=16, legendfontsize=18,
     )
 end
 
@@ -528,18 +542,18 @@ function plot_world_recovery_over_time(trial)
     world_panel = ranked_posterior_series_plot(
         elapsed_times, diagnostics[:world_rmse],
         diagnostics[:posterior_world_rmse];
-        title="World-model average RMSE",
-        ylabel="Spatially weighted average field RMSE",
+        title="Environmental belief",
+        ylabel="Field RMSE",
         posterior_label="Posterior expected field",
-        show_legend=true,
+        show_legend=false,
     )
     target_panel = ranked_posterior_series_plot(
         elapsed_times, diagnostics[:target_rmse],
         diagnostics[:posterior_target_rmse];
-        title="Inferred target-field weighted RMSE",
-        ylabel="Spatially weighted target field RMSE",
+        title="Sampling value",
+        ylabel="Target-field RMSE",
         posterior_label="Posterior expected target",
-        show_legend=true,
+        show_legend=false,
     )
 
     trajectory_mmd_panel = plot(
@@ -547,25 +561,25 @@ function plot_world_recovery_over_time(trial)
         color=:black, linewidth=2.6, marker=:star5, markersize=3.5,
         markerstrokewidth=0, label=false, xlabel="Elapsed time (s)",
         ylabel="Trajectory-to-target MMD²",
-        title="Observed trajectory vs. generating target",
+        title="Observed coverage",
     )
     particle_mmd_panel = ranked_posterior_series_plot(
         elapsed_times,
         diagnostics[:particle_mmd], diagnostics[:posterior_mmd];
-        title="Inferred target vs. generating target",
+        title="Inferred sampling target",
         ylabel="Target-measure MMD²",
         posterior_label="Posterior mixture",
-        show_legend=true,
+        show_legend=false,
     )
 
     plot(
         world_panel, target_panel, trajectory_mmd_panel, particle_mmd_panel;
-        layout=(2, 2), size=(1700, 1150), dpi=180,
-        titlefontsize=16, guidefontsize=12,
-        tickfontsize=10, legendfontsize=9,
+        layout=(2, 2), size=(1200, 820), dpi=180,
+        titlefontsize=19, guidefontsize=17,
+        tickfontsize=15, legendfontsize=14,
         left_margin=12Plots.mm, right_margin=5Plots.mm,
         top_margin=5Plots.mm, bottom_margin=8Plots.mm,
-        plot_title="Trial $(trial[:trial]) world-model recovery over elapsed time",
+        plot_title="Recovery at δSOM = $(round(trial[:som_hull_distance]; digits=2))",
         plot_titlefontsize=18,
     )
 end

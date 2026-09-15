@@ -305,8 +305,7 @@ function plot_world_particle_distribution(
         panel,
         final[:, 1],
         final[:, 2];
-        marker_z=result.final_weights,
-        color=:viridis,
+        color=:purple,
         colorbar=false,
         markersize=3,
         alpha=0.55,
@@ -627,21 +626,22 @@ function plot_world_trial_particles(
         )
         title = ""
         if !isnothing(som_coefficients)
-            title = "Distance from SOM region: " *
-                "$(round(trial[:som_hull_distance]; digits=2)) prior s.d."
+            title = "δSOM = $(round(trial[:som_hull_distance]; digits=2))"
         end
         plot!(
             panel;
             title,
-            legend=index == 1 ? :topleft : false,
+            legend=false,
             xlabel=index > length(trials) - min(5, length(trials)) ?
-                "Prior-to-generating direction (prior s.d.)" : "",
+                "Prior → belief" : "",
             ylabel=(index - 1) % 5 == 0 ?
-                "Orthogonal direction (prior s.d.)" : "",
-            titlefontsize=14,
-            guidefontsize=12,
-            tickfontsize=10,
-            legendfontsize=9,
+                "Orthogonal direction" : "",
+            titlefontsize=19,
+            guidefontsize=17,
+            tickfontsize=16,
+            xticks=2ceil(Int, xlims(panel)[1] / 2):2:
+                2floor(Int, xlims(panel)[2] / 2),
+            legendfontsize=16,
             left_margin=(index - 1) % 5 == 0 ? 10Plots.mm : 4Plots.mm,
             right_margin=5Plots.mm,
             top_margin=5Plots.mm,
@@ -652,11 +652,23 @@ function plot_world_trial_particles(
     end for (index, trial) in enumerate(trials)]
     columns = min(5, length(panels))
     rows = ceil(Int, length(panels) / columns)
+    legend_panel = plot(; framestyle=:none, axis=false, grid=false,
+        legend=:top, legend_columns=3, legendfontsize=17)
+    for (label, color, marker) in (
+        ("EOF prior particles", :gray, :circle),
+        ("EOF posterior particles", :purple, :circle),
+        ("SOM states", :steelblue, :utriangle),
+        ("Prior mean", :orange, :diamond),
+        ("Generating belief", :red, :star5),
+        ("EOF posterior mean", :black, :circle),
+    )
+        label == "SOM states" && isnothing(som_coefficients) && continue
+        scatter!(legend_panel, [NaN], [NaN]; label, color, marker, markersize=5)
+    end
     plot(
-        panels...;
-        layout=(rows, columns),
-        size=(620 * columns, 520 * rows),
-        dpi=180,
+        legend_panel, panels...;
+        layout=@layout([a{0.13h}; grid(rows, columns)]),
+        size=(1600, 760), dpi=180,
     )
 end
 
