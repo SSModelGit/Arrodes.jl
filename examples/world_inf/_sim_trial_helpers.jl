@@ -3,6 +3,7 @@ using Arrodes: TrajectoryObservation, WorldInferenceContext,
 using Arrodes.WorldInference: measure_discrepancy
 using LinearAlgebra: Diagonal, Symmetric, cholesky, dot, norm, tr
 using Plots: grid, plot, plot!, twinx
+using LaTeXStrings
 using SCRIBE: reconstruct_eof_field
 using SCRIBE.ROMSTools: plot_roms_curl, wet_grid_locations
 using Statistics: mean
@@ -548,6 +549,15 @@ function plot_world_recovery_over_time(trial)
     elapsed_times = trial[:elapsed_times]
     diagnostics = trial[:recovery_diagnostics]
 
+    world_panel = ranked_posterior_series_plot(
+        elapsed_times, diagnostics[:world_rmse],
+        diagnostics[:posterior_world_rmse];
+        title="Environmental belief",
+        ylabel="Field RMSE",
+        posterior_label="Posterior expected field",
+        show_legend=false,
+    )
+
     target_panel = ranked_posterior_series_plot(
         elapsed_times, diagnostics[:target_rmse],
         diagnostics[:posterior_target_rmse];
@@ -560,11 +570,14 @@ function plot_world_recovery_over_time(trial)
     particle_field_discrepancy_plot = ranked_posterior_series_plot(
         elapsed_times,
         diagnostics[:particle_mmd], diagnostics[:posterior_mmd];
-        title="Target-field discrepancy",
+        title="Discrepancy between\n" * 
+        L"$f^\star$ and $\widehat{f}^{EOF}$",
         ylabel="Target-to-target MMD²",
         posterior_label="Posterior mixture",
         show_legend=false,
     )
+    title="Discrepancy between\n" * 
+        L"$f^\star$ and $\widehat{f}^{EOF}$"
 
     particle_mmd_panel = ranked_posterior_series_plot(
         elapsed_times,
@@ -593,7 +606,7 @@ function plot_world_recovery_over_time(trial)
     )
 
     figure = plot(
-        target_panel, particle_field_discrepancy_plot, particle_mmd_panel;
+        world_panel, particle_field_discrepancy_plot, particle_mmd_panel;
         layout=(1, 3), size=(1600, 520), dpi=180,
         titlefontsize=18, guidefontsize=16,
         tickfontsize=14, legendfontsize=12,
@@ -602,5 +615,6 @@ function plot_world_recovery_over_time(trial)
         plot_title="Recovery at δSOM = $(round(trial[:som_hull_distance]; digits=2))",
         plot_titlefontsize=18,
     )
+    plot!(figure[2], title=title, titlefontsize=14, top_margin=8Plots.mm)
     return figure
 end
