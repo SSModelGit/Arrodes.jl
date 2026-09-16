@@ -404,9 +404,11 @@ function save_world_inference_visualizations(
     som_coefficients=nothing,
     frame_count=80,
     fps=8,
-    animate=true
+    animate=true,
+    use_svg=false
 )
     mkpath(output)
+    if use_svg; plot_type = ".svg"; else; plot_type = ".png"; end
     horizon = size(result.coefficient_means, 2) - 1
 
     savefig(
@@ -417,7 +419,7 @@ function save_world_inference_visualizations(
             field_plot,
             horizon,
         ),
-        joinpath(output, "posterior_comparison.png"),
+        joinpath(output, "posterior_comparison$plot_type"),
     )
     savefig(
         plot_world_coefficient_comparison(
@@ -426,7 +428,7 @@ function save_world_inference_visualizations(
             prior_mean,
             horizon,
         ),
-        joinpath(output, "coefficient_comparison.png"),
+        joinpath(output, "coefficient_comparison$plot_type"),
     )
     savefig(
         plot_world_particle_distribution(
@@ -436,7 +438,7 @@ function save_world_inference_visualizations(
             prior_covariance,
             som_coefficients,
         ),
-        joinpath(output, "particle_distribution.png"),
+        joinpath(output, "particle_distribution$plot_type"),
     )
     savefig(
         plot_world_particle_health(
@@ -448,7 +450,7 @@ function save_world_inference_visualizations(
             diagnostics,
             som_coefficients,
         ),
-        joinpath(output, "particle_health.png"),
+        joinpath(output, "particle_health$plot_type"),
     )
 
     if animate
@@ -536,19 +538,21 @@ function save_world_inference_visualizations(
     frame_count=80,
     fps=8,
     animate=true,
+    use_svg=false
 )
     mkpath(output)
     horizon = size(result.posterior_probabilities, 2) - 1
+    if use_svg; plot_type = ".svg"; else; plot_type = ".png"; end
 
     savefig(
         plot_world_posterior_comparison(
             result, field_history, truth_field, trajectory, field_plot, horizon,
         ),
-        joinpath(output, "posterior_comparison.png"),
+        joinpath(output, "posterior_comparison$plot_type"),
     )
     savefig(
         plot_som_probabilities(result, horizon, truth_vertex),
-        joinpath(output, "vertex_probabilities.png"),
+        joinpath(output, "vertex_probabilities$plot_type"),
     )
 
     if animate

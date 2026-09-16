@@ -52,12 +52,15 @@
     "seed": 1297439828,
     "run_roms": true,
     "run_som": false,
-    "worlds_per_level": 5,
-    "trajectories_per_world": 2,
+    "levels": 10,
+    "worlds_per_level": 1,
+    "trajectories_per_world": 1,
     "snapshot_gap": 8
   },
   "visualization": {
-    "arrow_stride": 7
+    "arrow_stride": 7,
+    "show_arrows": false,
+    "use_svg": true
   },
   "rel_output_path": "../results/world_inf/som_comparison_multi_trial"
 }

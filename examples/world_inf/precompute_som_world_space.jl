@@ -119,11 +119,17 @@ end
 
 worlds_per_level = mission[:trials][:worlds_per_level]
 snapshot_gap = mission[:trials][:snapshot_gap]
-distance_targets = collect(range(
-    minimum(snapshot_som_hull_distances),
-    maximum(snapshot_som_hull_distances);
-    length=10,
-))
+level_count = get(mission[:trials], :levels, 10)
+level_count > 0 || error("trials.levels must be positive")
+distance_targets = if level_count == 1
+    [mean(extrema(snapshot_som_hull_distances))]
+else
+    collect(range(
+        minimum(snapshot_som_hull_distances),
+        maximum(snapshot_som_hull_distances);
+        length=level_count,
+    ))
+end
 selected_snapshots = Int[]
 selected_levels = Int[]
 selected_coefficients = Vector{Float64}[]

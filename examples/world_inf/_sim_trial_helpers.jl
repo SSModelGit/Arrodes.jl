@@ -163,21 +163,22 @@ function construct_world_recovery_diagnostics_cache(
 
     p_count = min(top_count, n_particles)
     horizon = length(observations)
-    trajectory_mmd = let cache = Dict{Symbol,Any}()
-        [
-            measure_discrepancy(problem, timestep, truth_measure, cache)
-            for timestep in 1:horizon
-        ]
-    end
+    mmd_cache = Dict{Symbol,Any}()
+    trajectory_mmd = [
+        measure_discrepancy(problem, timestep, truth_measure, mmd_cache)
+        for timestep in 1:horizon
+    ]
 
     # rmse/mmd plot diagnostics
     world_rmse = fill(NaN, p_count, horizon)
     target_rmse = fill(NaN, p_count, horizon)
     particle_mmd = fill(NaN, p_count, horizon)
+    particle_trajectory_mmd = fill(NaN, p_count, horizon)
 
     posterior_world_rmse = fill(NaN, horizon)
     posterior_target_rmse = fill(NaN, horizon)
     posterior_mmd = fill(NaN, horizon)
+    posterior_trajectory_mmd = fill(NaN, horizon)
 
     # ess/p-health diagnostics
     behavioral_mmd = fill(NaN, horizon)
@@ -185,7 +186,6 @@ function construct_world_recovery_diagnostics_cache(
     coeff_spread = fill(NaN, horizon)
     resampled = falses(horizon)
 
-    mmd_cache = Dict{Symbol,Any}()
     callbacks = Dict{Symbol,Any}()
 
     diagnostics = Dict{Symbol, Any}(
@@ -194,10 +194,12 @@ function construct_world_recovery_diagnostics_cache(
         :world_rmse => world_rmse,
         :target_rmse => target_rmse,
         :particle_mmd => particle_mmd,
+        :particle_trajectory_mmd => particle_trajectory_mmd,
 
         :posterior_world_rmse => posterior_world_rmse,
         :posterior_target_rmse => posterior_target_rmse,
         :posterior_mmd => posterior_mmd,
+        :posterior_trajectory_mmd => posterior_trajectory_mmd,
 
         :behavioral_mmd => behavioral_mmd,
         :trajectory_mmd => trajectory_mmd,
@@ -231,6 +233,9 @@ function construct_world_recovery_diagnostics_cache(
             particle_mmd[rank, timestep] = target_measure_mmd(
                 problem, particle_coefficients, truth_coefficients, mmd_cache
             )
+            particle_trajectory_mmd[rank, timestep] = kernel_discrepancy(
+                problem, timestep, particle_coefficients, mmd_cache,
+            )
         end
 
         posterior_field = reconstruct_eof_field(
@@ -249,6 +254,9 @@ function construct_world_recovery_diagnostics_cache(
         posterior_mmd[timestep] = target_measure_mmd(
             problem, particles, weights,
             truth_coefficients, mmd_cache,
+        )
+        posterior_trajectory_mmd[timestep] = kernel_discrepancy(
+            problem, timestep, particles, weights, mmd_cache,
         )
     end
 
@@ -386,6 +394,7 @@ function plot_trial_curl_field(
         magnitude=true,
         display_scale=1.0,
         colorbar_title="normalized |curl| shape",
+        show_arrows=mission[:visualization][:show_arrows]
     )
 end
 
@@ -539,47 +548,59 @@ function plot_world_recovery_over_time(trial)
     elapsed_times = trial[:elapsed_times]
     diagnostics = trial[:recovery_diagnostics]
 
-    world_panel = ranked_posterior_series_plot(
-        elapsed_times, diagnostics[:world_rmse],
-        diagnostics[:posterior_world_rmse];
-        title="Environmental belief",
-        ylabel="Field RMSE",
-        posterior_label="Posterior expected field",
-        show_legend=false,
-    )
     target_panel = ranked_posterior_series_plot(
         elapsed_times, diagnostics[:target_rmse],
         diagnostics[:posterior_target_rmse];
-        title="Sampling value",
+        title="Target-field recovery",
         ylabel="Target-field RMSE",
         posterior_label="Posterior expected target",
         show_legend=false,
     )
 
-    trajectory_mmd_panel = plot(
-        elapsed_times, diagnostics[:trajectory_mmd];
-        color=:black, linewidth=2.6, marker=:star5, markersize=3.5,
-        markerstrokewidth=0, label=false, xlabel="Elapsed time (s)",
-        ylabel="Trajectory-to-target MMD²",
-        title="Observed coverage",
-    )
-    particle_mmd_panel = ranked_posterior_series_plot(
+    particle_field_discrepancy_plot = ranked_posterior_series_plot(
         elapsed_times,
         diagnostics[:particle_mmd], diagnostics[:posterior_mmd];
-        title="Inferred sampling target",
-        ylabel="Target-measure MMD²",
+        title="Target-field discrepancy",
+        ylabel="Target-to-target MMD²",
         posterior_label="Posterior mixture",
         show_legend=false,
     )
 
-    plot(
-        world_panel, target_panel, trajectory_mmd_panel, particle_mmd_panel;
-        layout=(2, 2), size=(1200, 820), dpi=180,
-        titlefontsize=19, guidefontsize=17,
-        tickfontsize=15, legendfontsize=14,
+    particle_mmd_panel = ranked_posterior_series_plot(
+        elapsed_times,
+        diagnostics[:particle_trajectory_mmd], diagnostics[:posterior_trajectory_mmd];
+        title="Trajectory agreement",
+        ylabel="Trajectory-to-target MMD²",
+        posterior_label="Posterior mixture",
+        show_legend=false,
+    )
+
+    for series in particle_mmd_panel.series_list[1:end-1]
+        series[:label] = ""
+        series[:linealpha] = 1.0
+        series[:markeralpha] = 0.8
+        series[:markersize] = 1.5
+    end
+    particle_mmd_panel.series_list[end-1][:label] =
+        "Top-$(size(diagnostics[:particle_trajectory_mmd], 1)) particles"
+    particle_mmd_panel.series_list[end][:linewidth] = 2.0
+    particle_mmd_panel.series_list[end][:markersize] = 2.0
+    plot!(
+        particle_mmd_panel, elapsed_times, diagnostics[:trajectory_mmd];
+        color=:green, linewidth=2.6, marker=:star5, markersize=3.5,
+        markerstrokewidth=0, label="Generating field",
+        legend=:topright,
+    )
+
+    figure = plot(
+        target_panel, particle_field_discrepancy_plot, particle_mmd_panel;
+        layout=(1, 3), size=(1600, 520), dpi=180,
+        titlefontsize=18, guidefontsize=16,
+        tickfontsize=14, legendfontsize=12,
         left_margin=12Plots.mm, right_margin=5Plots.mm,
-        top_margin=5Plots.mm, bottom_margin=8Plots.mm,
+        top_margin=5Plots.mm, bottom_margin=14Plots.mm,
         plot_title="Recovery at δSOM = $(round(trial[:som_hull_distance]; digits=2))",
         plot_titlefontsize=18,
     )
+    return figure
 end

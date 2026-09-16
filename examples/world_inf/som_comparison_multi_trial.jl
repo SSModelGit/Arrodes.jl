@@ -277,8 +277,30 @@ function roms_trial_worlds(mission, scenario)
     coefficients = data["selected_coefficients"]
     distances = vec(data["selected_prior_distances"])
     som_hull_distances = vec(data["selected_som_hull_distances"])
+    worlds_per_level = mission[:trials][:worlds_per_level]
+    worlds_per_level > 0 || error("trials.worlds_per_level must be positive")
+    available_levels = sort(unique(levels))
+    level_count = get(mission[:trials], :levels, length(available_levels))
+    1 <= level_count <= length(available_levels) || error(
+        "Requested $level_count distance groups; world_space_data contains " *
+        "$(length(available_levels)). Request between 1 and this count, or " *
+        "regenerate world_space_data with more levels.",
+    )
+    level_indices = level_count == 1 ? [cld(length(available_levels), 2)] :
+        round.(Int, range(1, length(available_levels); length=level_count))
+    groups = [
+        findall(==(level), levels) for level in available_levels[level_indices]
+    ]
+    for group in groups
+        length(group) >= worlds_per_level || error(
+            "Requested $worlds_per_level fields per distance group, but group " *
+            "$(levels[first(group)]) has only $(length(group)) precomputed fields. " *
+            "Regenerate world_space_data with enough fields or reduce worlds_per_level.",
+        )
+    end
+    selected = vcat([group[1:worlds_per_level] for group in groups]...)
     directions = read_roms_flow_directions(
-        scenario[:archive], roms, snapshots,
+        scenario[:archive], roms, snapshots[selected],
     )
 
     [
@@ -294,7 +316,7 @@ function roms_trial_worlds(mission, scenario)
             :actual_distance => distances[index],
             :som_hull_distance => som_hull_distances[index],
         )
-        for index in eachindex(snapshots)
+        for index in selected
     ]
 end
 
@@ -429,7 +451,8 @@ function plot_final_rmse(trials)
         for group in groups
     ]
     panel = plot(
-        distances, mean.(eof_rmse); yerror=std.(eof_rmse),
+        distances, mean.(eof_rmse);
+        yerror=[length(errors) > 1 ? std(errors) : 0.0 for errors in eof_rmse],
         color=:firebrick, marker=:circle, markersize=7,
         markerstrokecolor=:firebrick, markerstrokewidth=0, linewidth=3.2,
         label="Continuous EOF",
@@ -443,7 +466,8 @@ function plot_final_rmse(trials)
 
     plot!(
         panel, distances, mean.(som_rmse);
-        yerror=std.(som_rmse), color=:steelblue, marker=:utriangle,
+        yerror=[length(errors) > 1 ? std(errors) : 0.0 for errors in som_rmse],
+        color=:steelblue, marker=:utriangle,
         markersize=8, markerstrokecolor=:steelblue,
         markerstrokewidth=0, linewidth=3.2, linestyle=:dash,
         label="Finite SOM",
@@ -461,6 +485,8 @@ function save_trial_results(output, mission, scenario, trial)
         :SOM => "SOM posterior mean",
     )
     observed_title = "Observed-agent world belief and trajectory"
+
+    plot_type = mission[:visualization][:use_svg] ? ".svg" : ".png"
 
     comparison = plot_world_result_comparison(
         trial[:field_histories],
@@ -480,7 +506,7 @@ function save_trial_results(output, mission, scenario, trial)
     )
     savefig(
         comparison,
-        joinpath(output, "eof_som_posterior_comparison.png"),
+        joinpath(output, "eof_som_posterior_comparison$plot_type"),
     )
 
     rmse = plot_world_method_rmse(trial)
@@ -492,7 +518,7 @@ function save_trial_results(output, mission, scenario, trial)
         tickfontsize=12,
         legendfontsize=12,
     )
-    savefig(rmse, joinpath(output, "eof_som_rmse.png"))
+    savefig(rmse, joinpath(output, "eof_som_rmse$plot_type"))
 
     save_world_inference_visualizations(
         joinpath(output, "eof"),
@@ -507,10 +533,11 @@ function save_trial_results(output, mission, scenario, trial)
         diagnostics=trial[:recovery_diagnostics],
         som_coefficients=scenario[:som_coefficients],
         animate=false,
+        use_svg=mission[:visualization][:use_svg]
     )
     savefig(
         plot_world_recovery_over_time(trial),
-        joinpath(output, "eof", "recovery_over_time.png"),
+        joinpath(output, "eof", "recovery_over_time$plot_type"),
     )
 
     save_world_inference_visualizations(
@@ -522,6 +549,7 @@ function save_trial_results(output, mission, scenario, trial)
         field_plot;
         truth_vertex=trial[:truth_vertex],
         animate=false,
+        use_svg=mission[:visualization][:use_svg]
     )
 end
 
@@ -530,6 +558,7 @@ function save_source_results(
 )
     source_output = joinpath(output, source)
     mkpath(source_output)
+    plot_type = mission[:visualization][:use_svg] ? ".svg" : ".png"
 
     savefig(
         plot_world_trial_reconstructions(
@@ -537,15 +566,15 @@ function save_source_results(
             scenario,
             mission,
         ),
-        joinpath(source_output, "eof_som_world_reconstructions.png"),
+        joinpath(source_output, "eof_som_world_reconstructions$plot_type"),
     )
     savefig(
         plot_ten_trial_rmse_histories(displayed),
-        joinpath(source_output, "rmse_over_time.png"),
+        joinpath(source_output, "rmse_over_time$plot_type"),
     )
     savefig(
         plot_final_rmse(trials),
-        joinpath(source_output, "final_rmse_by_prior_distance.png"),
+        joinpath(source_output, "final_rmse_by_prior_distance$plot_type"),
     )
     savefig(
         plot_world_trial_particles(
@@ -554,7 +583,7 @@ function save_source_results(
             scenario[:prior_covariance],
             scenario[:som_coefficients],
         ),
-        joinpath(source_output, "eof_som_particle_locations.png"),
+        joinpath(source_output, "eof_som_particle_locations$plot_type"),
     )
 
     for trial in displayed
