@@ -3,97 +3,146 @@
 
 \usepackage{amsmath,amsfonts,amssymb}
 \usepackage{graphicx}
-\usepackage{cite}
+% \usepackage{cite}
+\usepackage[sort,compress]{cite}
 \usepackage{balance}
 \usepackage{algorithm, algpseudocode}
 \usepackage[bookmarks=true,hidelinks]{hyperref}
 
-\hypersetup{
-  pdftitle={Arrodes: Recovering Environmental Beliefs from Ergodic Exploration},
-  pdfsubject={Inference of an exploring agent's environmental field belief from observed trajectories},
-  pdfkeywords={multi-robot exploration, behavior explanation, world-belief inference, ergodic exploration, empirical orthogonal functions, self-organizing maps},
-}
+\usepackage{xcolor}
+\newcommand\todo[1]{\textcolor{red}{TODO: }\textcolor{red}{#1}}
 
-\title{\LARGE \bf
-Arrodes: Recovering Environmental Beliefs from Ergodic Exploration
+\hypersetup{
+  pdftitle={Arrodes: Inferring Environmental Models through Multi-Robot Epistemic Belief Inference without Communication},
+  pdfsubject={Inference of an exploring agent's environmental field belief from observed trajectories},
+  pdfkeywords={belief inference, behavior explanation, informative path planning, multi-robot exploration, ergodic exploration, empirical orthogonal functions, self-organizing maps}, 
 }
-\author{Anonymous}
+\pdfminorversion=4
+\title{\LARGE \bf
+Arrodes: Inferring Environmental Models through Multi-Robot Epistemic Belief Inference without Communication
+}
+\author{Anonymous Authors For Review}
 
 \begin{document}
+\bstctlcite{IEEEopt}
 \maketitle
 
 \begin{abstract}
 
-  In this paper we present a method to address the gap in collaborative exploration that arises when robots cannot share their latest measurements of and beliefs about the environment state. We propose \textit{Arrodes}, an algorithm for inferring the internal world model of an agent exploring an environment through observations of its trajectory. Building off of Bayesian techniques for inferring beliefs in finite, discrete worlds, \textit{Arrodes} uses a self-organizing map (SOM) as a finite, representative space of potential models to perform exact inference when observations are sparse. To handle the limitations of a finite inference space in expressing the potential variability of continuous environmental fields, such as novel transient upwellings in ocean current fields, \textit{Arrodes} also extends to a generalized inference tier using empirical orthogonal functions (EOFs) to capture the continuous space of environment fields. We demonstrate both tiers - finite SOM-based inference and expressive EOF-defined inference - on simulated AUV behavior, using as ground truth a two-year dataset of environment model output around Ram Head on St. John in the U.S. Virgin Islands.
+  In this paper we present a method to address the gap in collaborative exploration that arises when robots cannot share their latest measurements of and beliefs about the environment state. We propose \textit{Arrodes}, an algorithm for inferring the internal world model of an agent exploring an environment through observations of its trajectory. Building off of Bayesian techniques for inferring beliefs in finite, discrete worlds, \textit{Arrodes} uses a self-organizing map (SOM) as a finite, representative space of potential models to perform exact inference when observations are sparse. To handle the limitations of a finite inference space in expressing the potential variability of continuous environmental fields, such as novel transient upwellings in ocean current fields, \textit{Arrodes} also extends to a generalized inference tier using empirical orthogonal functions (EOFs) to capture the continuous space of environment fields. We demonstrate both tiers - finite SOM-based inference and expressive EOF-defined inference - on a simulated AUV using model output around Ram's Head on St. John in the U.S. Virgin Islands.
 
 \end{abstract}
 
 \section{Introduction}
 
-Distributed exploration is a multi-robot paradigm for efficiently gathering informative samples of an environment as a group. As robotic agents determine the regions to gather samples from an internal environment model, effective distributed operation relies on the robots' internal models being consistent with one another, and often necessitates communication of measurements and beliefs. Dynamic tasks like monitoring ocean currents pose a two-fold issue to teams, presenting a changing environment that strongly limits communication, resulting in robots soon evolving new beliefs in the world but rendered unable to share their insights \cite{hollinger2012underwater, binney2010informative}. This renders teammates and human supervisors alike with an obfuscated understanding of robot behavior, unable to explain what beliefs, and changes therein, are driving the robot's choices. Without this understanding, team members risk wasting resources covering regions already observed, or worse, not detecting and reacting to novel transient phenomena. This leaves agents with a pressing question: when directly querying models and beliefs that drive a teammate's behavior is infeasible, can observations of its actions reveal in reverse those same beliefs?
+Distributed exploration is a multi-robot paradigm for efficiently gathering informative samples of an environment as a group. As robotic agents determine the regions to gather samples from an internal environment model, effective distributed operation relies on the robots' internal models being consistent with one another, and often necessitates communication of measurements and beliefs. Dynamic tasks like monitoring ocean currents pose a two-fold issue to teams, presenting a changing environment that strongly limits communication, so as robot beliefs evolve, they may be unable to share their insights \cite{hollinger2012underwater, binney2010informative}. This renders teammates and human supervisors alike with an obfuscated understanding of robot behavior, unable to explain what is driving the robot's choices. Without this understanding, team members risk wasting resources covering regions already observed, or worse, not detecting and reacting to novel transient phenomena. This leaves agents with a pressing question: when directly querying models and beliefs that drive a teammate's behavior is infeasible, can observations of its actions reveal in reverse those same beliefs?
 
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=\columnwidth]{figs/front_page_reconstructions.png}
-  \caption{Environmental field beliefs inferred from observed motion. Each horizontal pair of plots shows (left) the ground truth environment model of the observed agent, with its observable trajectory in red, followed by (right) Arrodes's reconstruction using the EOF-based inferred posterior. The figures depict the spatial distribution of curl magnitude as a heatmap; arrows show the underlying flow for context.}
-  \label{fig:front-reconstructions}
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{figs/arrodes.png}
+    \caption{Overview of Arrodes. (top left) The observed agent uses IPP to explore an environment using its environmental belief $f^\star$.   (top right) The ego agent observes the trajectory without access to $f^\star$. (bottom) Arrodes constructs a hypothesis space from historical environmental data, either as a finite set of SOM fields or as a continuous hyperspace defined with an EOF basis. Arrodes evaluates the hypothesis space the best candidate field using the ergodic discrepancy between each candidate's induced sampling field and the observed trajectory.}
+    \label{fig:arrodes}
+    \vspace{-.6cm}
 \end{figure}
 
-Attributing behavior to a rational underlying belief has also appeared in discussions of computational cognitive modeling and its extensions to human-robot interactions. Baker \emph{et al.} \cite{baker2017rational} demonstrated that an approximately rational Bayesian model of an agent's belief structure, termed Bayesian Theory of Mind (BToM), was sufficient to effectively capture the relation between belief and behavior. However, belief inference in this manner presents two difficulties. First, exploratory planners determine locations to samples using a transformation of environment belief that helps indicate regions with most promise of interesting information; observers must account for this transformation when reasoning how a sampling route arises from an underlying field. The transformation also frequently prevents disambiguation, such as commonly seen in reinforcement learning between learned policies and their underlying reward functions \cite{garg2021iq}. Second, agents are often exploring with respect to continuous fields and gradients, which present a level of variability that simple discretizations of an environment's state struggle to fully characterize, and particularly out-of-distribution novel events. Contemporary Bayesian Theory of Mind (BToM) approaches that develop open-ended approaches to handle challenges of disambiguation, like presented by Ying \emph{et al.} \cite{ying2023inferring, ying2025belief}, still rely on having symbolically rich, finite spaces of potential explanations, a challenging structural requirement for environment models of continuous phenomena. The inference procedure needs a representation of potential environment beliefs that is tractable and sufficiently expressive, and should handle disambiguation from an exploration-centric transformation to the underlying environment model itself.
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/front_page_reconstructions.png}
+  \caption{Environmental field beliefs inferred from observed motion. Each horizontal pair of plots shows (left) the ground truth environment model of the observed agent, with its observable trajectory in red, followed by (right) Arrodes's reconstruction using the EOF-based inferred posterior. The figures depict the spatial distribution of curl magnitude as a heatmap; arrows show the underlying flow for context.}
+  \label{fig:front-reconstructions}
+  \vspace{-.5cm}
+\end{figure*}
 
-We answer this question in our paper with \textit{Arrodes}, an inference system that utilizes two descriptive environment modeling frameworks to enable both classic and open-ended BToM methods for inferring the belief in the world an exploring agent has purely from observations of its sampling trajectory. The first tier of \textit{Arrodes} is finite mode inference, utilizing the self-organizing map (SOM) approach of McCammon \emph{et al.} \cite{mccammon2024som} to develop a rich collection of environment states that can sufficiently approximate the majority of a dynamic system; the second tier presents an extension to open-ended inference, through decomposing the environment via empirical orthogonal function (EOFs) into an easily traversable hyperspace of potential world models \cite{young2024greedy}. To enable disambiguation between exploration reward functions and the underlying world, we model robots as ergodic with respect to the environment, noting work by Miller \emph{et al.} \cite{miller2016ergodic} and by Dressel and Kochenderfer \cite{dressel2018optimality}, who show that trajectories made by informative path planners are empirically as informative as ergodic trajectories. Enumerative BToM methods are used for finite-mode inference, while open-ended inference uses probabilistic program proposals (SMCP$^{3}$) \cite{lew2023smcp3} to enable inference in the EOF model hyperspace.
+Attributing behavior to a rational underlying belief has also appeared in discussions of computational cognitive modeling and its extensions to human-robot interactions. Baker \emph{et al.} \cite{baker2017rational} demonstrated that an approximately rational Bayesian model of an agent's belief structure, termed Bayesian Theory of Mind (BToM), was sufficient to effectively capture the relation between belief and behavior. However, belief inference in this manner presents two difficulties. First, exploratory planners determine locations to sample using a transformation of environment belief that helps indicate regions with most promise of interesting information; observers must account for this transformation when reasoning how a sampling route arises from the underlying physical environment. The transformation also frequently prevents disambiguation, such as commonly seen in reinforcement learning between learned policies and their underlying reward functions \cite{garg2021iq}. Second, agents are often exploring with respect to continuous fields and gradients, which present a level of variability that simple discretizations of an environment's state struggle to fully characterize, especially rare events. Contemporary Bayesian Theory of Mind (BToM) approaches that develop open-ended approaches to handle challenges of disambiguation still rely on having symbolically rich finite spaces of potential explanations  \cite{ying2023inferring, ying2025belief}, a challenging structural requirement for environment models of continuous phenomena. The inference procedure needs a representation of potential environment beliefs that is tractable and sufficiently expressive, and should handle disambiguation from an exploration-centric transformation to the underlying environment model itself.
 
-We evaluate Arrodes on simulated AUV exploration using two years of ROMS output around Ram Head, St.~John, in the U.S.~Virgin Islands \cite{zhang2025fine}. We validate that our inference procedure is successful in recovering the observed agent's environment belief even as the divergence between the ego agent and the observed agent grows beyond multiple standard deviations. We show the effectiveness of the SOM approach is quickly converging on an approximate reconstruction of the observed agent's belief, requiring minimal observations of behavior, and further demonstrate that the expressiveness allotted by the EOF representation allows more accurate reconstructions after a sufficient number of behavior observations. We additionally show how open-ended inference with EOFs outperform finite-mode inference with SOMs when recovering out-of-distribution environment models formed from novel observations, and provide a qualitative metric for choosing between inference modes to use. To the best of our knowledge, our experiements mark the first time agents attempt to infer beliefs in continuous environment fields through observations of exploratory behavior.
+We answer this question in our paper with \textit{Arrodes}, outlined in Fig.~\ref{fig:arrodes}, which uses an inference system with two descriptive environment modeling frameworks to enable both classic and open-ended BToM methods for inferring the belief in the world an exploring agent has purely from observations of its sampling trajectory. The first tier of Arrodes is finite mode inference, utilizing a self-organizing map (SOM) \cite{mccammon2024som} to develop a set of states that sufficiently approximate the hypothesis space. The second tier presents an extension to open-ended inference, through decomposing the environment via empirical orthogonal function (EOFs) into an easily traversable hyperspace of potential world models \cite{young2024greedy}. To enable disambiguation between exploration reward functions and the underlying world, we model robots as ergodic with respect to the environment, since trajectories made by informative path planners are empirically as informative as ergodic trajectories \cite{miller2016ergodic, dressel2018optimality}. Enumerative BToM methods are used for finite-mode inference, while open-ended inference uses probabilistic program proposals (SMCP$^{3}$) \cite{lew2023smcp3} for inference in the EOF model hyperspace.
+
+We evaluate Arrodes in the context of an exploration task by an Autonomous Underwater Vehicle (AUV) ROMS model output around Ram's Head, St.~John, in the U.S.~Virgin Islands \cite{zhang2025fine}. We validate that our inference procedure is successful in recovering the observed agent's environment belief even as the divergence between the ego agent and the observed agent grows beyond multiple standard deviations. We show the effectiveness of the SOM approach is quickly converging on an approximate reconstruction of the observed agent's belief, requiring minimal observations of behavior, and further demonstrate that the expressiveness allotted by the EOF representation allows more accurate reconstructions after a sufficient number of behavior observations. We additionally show how open-ended inference with EOFs outperform finite-mode inference with SOMs when recovering out-of-distribution environment models formed from novel observations, and provide a qualitative metric for choosing between inference modes to use. To the best of our knowledge, our experiements mark the first time agents attempt to infer beliefs in continuous environment fields through observations of exploratory behavior.
 
 \section{Related Work}
 
 \subsection{Distributed Exploration under Limited Communication}
 
-Informative path planning (IPP) optimizes exploration routes by stochastically probing an environment model for sampling locations that will maximize a projected gain in knowledge; doing so depends on having a model that describes the distribution of a phenomena in an environment. To prevent measurements from repeatedly sampling regions of diminishing gains, IPP approaches are typically adaptive, updating environment models from gathered measurements online and re-planning accordingly \cite{binney2010informative, hollinger2012underwater}. In distributed multi-agent teams, local measurement updates lead to different models and can cause divergence in sampling plans; existing approaches address this dependence through communication scheduling and rendezvouses, explicitly modeling information availability through proximity, and through recasting planners as distributed optimization routines requiring consensus \cite{bramblett2023epistemic, olkin2024multi, swaminathan2024distributed}. Recent approaches have taken greater attention to addressing issues of communication availability, but all concede that the dearth of a stable intra-agent network will result in plans degrading to effectively decoupled single-agent behavior.
+Informative path planning (IPP) optimizes exploration routes by planning a path to maximize an information gain metric. To prevent  repeatedly sampling regions of diminishing gains, IPP approaches are typically adaptive, updating an environment model using observations and re-planning accordingly \cite{binney2010informative, hollinger2012underwater}. In distributed multi-agent teams, local measurement updates lead to different models and can cause divergence in sampling plans. Existing approaches address this dependence through communication scheduling and rendezvouses, explicitly modeling information availability through proximity, and through recasting planners as distributed optimization routines requiring consensus \cite{bramblett2023epistemic, olkin2024multi, swaminathan2024distributed}. Recent approaches have taken greater attention to addressing issues of communication availability, but all concede that the dearth of a stable intra-agent network will result in plans degrading to effectively decoupled single-agent behavior.
 
-In parallel to the stochastic IPP methods, ergodic planning supplies a useful alternative method for planning explorative paths. Intuitively recognizing that agents will want to spend the highest amounts of time near areas of high activity, ergodic planners posit that trajectory optimization should focus on designing paths where agents spend time exploring regions proportional to the amount of interest the region purportedly holds \cite{mathew2011ergodicity}. Dressel and Kochenderfer further identified that the optimal sampling plans under standard IPP formulation for a variety of information-gathering missions were ergodic \cite{dressel2018optimality}, indicating choosing an ergodic approach would result in equally explorative trajectories while eliminating the costly stochastic search nature of IPP planners. Work by Abraham and Murphey \cite{abraham2018decentralized} demonstrates that the communication requirements also simplify considerably in ergodic optimization systems, but do not eliminate the need for communication altogether. Subsequent work greatly expanded the robustness of ergodic planners to sensing noise, stochastic dynamics, and temporally varying fields \cite{miller2016ergodic, delatorre2016stochastic, hughes2026motionfields}, but did not change the fundamental requirement of ergodic systems needing consisting environment models across agents to enable distributed exploration planning.
+In parallel to the stochastic IPP methods, ergodic planning supplies a useful alternative method for planning explorative paths by optimizing trajectories so robots spend time exploring regions proportional to the region's value \cite{mathew2011ergodicity}.  Ergodic IPP considerably simplifies the communication requirements, but does not eliminate the need for communication altogether \cite{abraham2018decentralized}. Subsequent work on ergodic planners improved robustness to noise and temporally varying fields \cite{miller2016ergodic, hughes2026motionfields}, but did not change the fundamental requirement of consistent environment models across agents for distributed exploration.
 
 \subsection{Belief Inference and Behavioral Explanation}
 
-Explaining the behavior of autonomous robots often draws from work within cognitive modeling of rational agents and from imitation learning. The latter, commonly leveraged in single- and multi-agent reinforcement learning applications, provides a predictor for teammate behavior that is broadly usable across a variety of robotic domains and system representations \cite{ho2016generative}. Recent work in inverse soft Q-learning and its multi-agent extensions avoids adversarial optimization while retaining the ability to recover policies and reward functions from demonstrations \cite{garg2021iq,mai2024inverse}. However, imitation learning generally arrives at an intermediary representation between internal beliefs and behavior, such as a policy or Q-function, which serves as a powerful indicator of future actions and interests but does not explicitly expose the environmental beliefs driving those choices \cite{jarrett2021inverse}.
+Explaining the behavior of autonomous robots often draws from cognitive modeling of rational agents and from imitation learning. The latter, commonly leveraged in single- and multi-agent reinforcement learning applications, provides a predictor for teammate behavior that is broadly usable across a variety of robotic domains and system representations \cite{ho2016generative}. Recent work in inverse soft Q-learning and its multi-agent extensions avoids adversarial optimization while retaining the ability to recover policies and reward functions from demonstrations \cite{garg2021iq,mai2024inverse}. However, imitation learning generally arrives at an intermediary representation between internal beliefs and behavior, such as a policy or Q-function, which serves as a powerful indicator of future actions and interests but does not explicitly expose the environmental beliefs driving those choices \cite{jarrett2021inverse}.
 
-This distinction is particularly important in work on human-robot interaction, where anticipating the needs of teammates predicates effective cooperation. Kolb and Feigh estimate human situation awareness under partial observability through scene graph representations of their knowledge using handcrafted logical predicates and language-model reasoning \cite{kolb2024inferring}, while Chen \emph{et al.} introduces learning latent world models that predicts both teammates's observations and the beliefs that evolve from them \cite{chen2023leapt}. Hellou \emph{et al.} further develops a structured approach to lifting inferred beliefs from behavior \cite{hellou2023bayesian}, using the Bayesian Theory of Mind (BToM) method formulated by Baker \emph{et al.} \cite{baker2017rational} to correlate a task-search objective-action space for an agent to its behavior and extrapolate anomalous beliefs, providing a basis for interpreting decisions when given a relational model between beliefs and behaviors. These approaches, however, rely either on hand-crafted models, models trained on discrete-element systems, or language models, to represent the belief space, which are in turn too limited or too prohibitive to deploy on a simple robotic agent investigating environments such as ocean current flow fields.
+This distinction is particularly important in human-robot interaction, where anticipating the needs of teammates predicates effective cooperation, as observed by Kolb and Feigh's work on estimating human situation awareness using handcrafted predicates and learned model reasoning \cite{kolb2024inferring}. Hellou further develops a structured approach to lifting inferred beliefs from behavior \cite{hellou2023bayesian}, using the Bayesian Theory of Mind (BToM) formulated by Baker \emph{et al.} \cite{baker2017rational}. While these approaches rely on world models that do not adapt well to exploration of continuous environments, they elucidate the usability of probabilistic inference in recovering environment beliefs.
 
-The Bayesian Theory of Mind methodology proposes that given an expressive and tractable method of proposing new hypotheses, observations can constrain and converge hypotheses about the internal states to a model would make an agent's behavior expected. Extensions such as Open-Ended Sequential Inverse Plan Search (SIPS) \cite{zhixuan2020sips} support open-ended hypothesis spaces for BToM methods, while Han and Gmytrasiewicz extend BToM to interactive POMDPs for learning other agents' beliefs, preferences, and decision models \cite{han2018intentional}. Both assume a hypothesis search space that is either enumerable or comes with an efficient hypothesis proposal method, with support for probabilistic proposal networks developed in subsequent work \cite{lew2023smcp3}. In parallel, work on causal Bayesian inference of teammate beliefs in world construction and corresponding explanations for behavior \cite{ying2023inferring, ying2025belief} demonstrate the applicability of BToM methods for deducting rationale for observations, but remained limited to symbolically-rich constructions of the world that easily supplied hypotheses about environment beliefs. Application to the field of exploration requires specifying a \textit{tractable} hypothesis space, i.e. the space of environment models potentially held by an agent, and how those models drive behavior.
+BToM methodology generally proposes that given an expressive and tractable method of proposing new hypotheses, observations can constrain and converge hypotheses about the internal states to a model would make an agent's behavior expected. Extensions such as Open-Ended Sequential Inverse Plan Search (SIPS) \cite{zhixuan2020sips} support open-ended hypothesis spaces for BToM methods, while Han and Gmytrasiewicz extend BToM to interactive POMDPs for learning other agents' beliefs, preferences, and decision models \cite{han2018intentional}. Both assume a hypothesis search space that is either enumerable or comes with an efficient hypothesis proposal method, with support for probabilistic proposal networks developed in subsequent work \cite{lew2023smcp3}. In parallel, work on causal Bayesian inference of teammate beliefs in world construction and corresponding explanations for behavior \cite{ying2023inferring, ying2025belief} demonstrate the applicability of BToM methods for deducting rationale for observations, but remained limited to symbolically-rich constructions of the world that easily supplied hypotheses about environment beliefs. Application to the field of exploration requires specifying a \textit{tractable} hypothesis space, i.e. the space of environment models potentially held by an agent, and how those models drive behavior.
 
-\subsection{Representing Possible Environmental Worlds}
+% \subsection{Representing Possible Environmental Worlds}
 
-Self-organizing maps (SOMs) provide a compact representation of high-dimensional data through a finite collection of topologically connected latent models \cite{vanhulle2012som}. Meza-Padilla \emph{et al.} leveraged their ability to characterize high-dimensional data to model recurring ocean circulation patterns and their variability \cite{mezapadilla2019ocean}, work that was further adapted by McCammon \emph{et al.} and shown to be readily usable for online current estimation from sparse observations \cite{mccammon2024som}. Each node in an SOM's topological model acts as a candidate model, retaining the spatial resolution of the original environment and capturing snapshots of the field across temporally varying systems. This finite set of nodes provides a natural enumerable hypothesis space of environment beliefs for inference.
+% Self-organizing maps (SOMs) provide a compact representation of high-dimensional data through a finite collection of topologically connected latent models \cite{vanhulle2012som}. Meza-Padilla \emph{et al.} leveraged their ability to characterize high-dimensional data to model recurring ocean circulation patterns and their variability \cite{mezapadilla2019ocean}, work that was further adapted by McCammon \emph{et al.} and shown to be readily usable for online current estimation from sparse observations \cite{mccammon2024som}. Each node in an SOM's topological model acts as a candidate model, retaining the spatial resolution of the original environment and capturing snapshots of the field across temporally varying systems. This finite set of nodes provides a natural enumerable hypothesis space of environment beliefs for inference.
 
-Empirical orthogonal functions (EOFs) offer a complementary representation to SOMs through weighted combinations of spatial modes, with established applications to reconstructing oceangraphic fields from incomplete observations \cite{beckers2003eof}. For belief inference, this allows candidate fields to vary through their mode coefficients, and thus extending the hypothesis space to a hyperspace defined by the orthonormal modes constructed during EOF decomposition, where the coefficient vectors act as a tractable representation of potential environment models represented by the hyperspace. We draw on the linear EOF representation developed in SCRIBE \cite{scribe2026}, where historical fields supply a prior over candidate environment models. In combination with an effective mechanism of performing inference over open-ended hypothesis spaces such as SMCP$^{3}$ \cite{lew2023smcp3}, this continuous representation can consequently express beliefs unavailable to the finite SOM hypothesis set, while remaining feasibly searchable. However, this additional expressiveness would come at the cost of approximate particle inference in place of finite enumeration.
+% Empirical orthogonal functions (EOFs) offer a complementary representation to SOMs through weighted combinations of spatial modes, with established applications to reconstructing oceangraphic fields from incomplete observations \cite{beckers2003eof}. For belief inference, this allows candidate fields to vary through their mode coefficients, and thus extending the hypothesis space to a hyperspace defined by the orthonormal modes constructed during EOF decomposition, where the coefficient vectors act as a tractable representation of potential environment models represented by the hyperspace. We draw on the linear EOF representation developed in SCRIBE \cite{scribe2026}, where historical fields supply a prior over candidate environment models. In combination with an effective mechanism of performing inference over open-ended hypothesis spaces such as SMCP$^{3}$ \cite{lew2023smcp3}, this continuous representation can consequently express beliefs unavailable to the finite SOM hypothesis set, while remaining feasibly searchable. However, this additional expressiveness would come at the cost of approximate particle inference in place of finite enumeration.
 
-\section{Problem Formulation and Environmental Models}
+\section{Problem Formulation}
 
-\subsection{Problem Statement}
-
-Let $\mathcal X$ be the spatial domain and let $f^\star\in\mathcal F$ be the static environmental field estimate guiding an observed agent. An ego agent receives a sequence
+We consider a multi-robot exploration mission with two agents, one is the observed agents, which moves through the spatial domain $\mathcal X \in \mathbb{R}^2$ be the spatial domain guided by an environmental field estimate $f^\star\in\mathcal F$, where $\mathcal F$ is the set of all possible environmental fields.  The other agent is the ego agent, which is able to make observations of the \emph{trajectory prefix} of the observed agent which is the locations it visits, $x_q\in\mathcal X$, and their dwell times, $d_q$,
 \begin{equation}
-  z_{1:T}=\{(x_q,d_q)\}_{q=1}^{T}
+  z_{1:T}=\{(x_q,d_q)\}_{q=1}^{T}.
 \end{equation}
-of visited locations $x_q\in\mathcal X$ and dwell times $d_q$. It knows the exploration objective $r:\mathcal F\times\mathcal X\rightarrow\mathbb R_{\geq0}$ and assumes that the observed agent allocates coverage ergodically with respect to the resulting sampling target. It does not receive the measurements from which $f^\star$ was formed. We call $f^\star$ the \emph{generating field} and $z_{1:t}$ the \emph{observed trajectory prefix}.
+The ego agent also knows the exploration objective $r:\mathcal F\times\mathcal X\rightarrow\mathbb R_{\geq0}$ and, while it does not know the exact IPP method used to optimize the observed agent's behavior with respect to its \emph{generating field}, $f^\star$, the ego agent assumes that the observed agent allocates coverage ergodically with respect to the resulting sampling target. 
 
-The objective assigns sampling value $r(f,x)$ to location $x$ under a candidate field $f$. At quadrature locations $\xi_1,\ldots,\xi_M$ with spatial weights $w_m$, it induces the probability masses
+The exploration objective assigns sampling value $r(f,x)$ to location $x$ under a candidate field $f$. At locations $\xi_1,\ldots,\xi_M$ with spatial weights $w_m$, it induces probability masses
 \begin{equation}
   \mu_m(f)=\frac{w_m r(f,\xi_m)}{\sum_{j=1}^{M}w_jr(f,\xi_j)}.
   \label{eq:target-measure}
 \end{equation}
 We call $\mu(f)$ the \emph{sampling target}. Arrodes infers
 \begin{equation}
-  p_t(f)=p(f\mid z_{1:t},r),\quad
-  \widehat f_t=\mathbb E_{p_t}[f],\quad
+  p_t(f)=p(f\mid z_{1:t},r),\;
+  \widehat f_t=\mathbb E_{p_t}[f],\;
   \widehat\mu_t=\mathbb E_{p_t}[\mu(f)].
   \label{eq:inference-problem}
 \end{equation}
-The posterior mean $\widehat f_t$ is the reconstructed field shown in Fig.~\ref{fig:front-reconstructions}; $\widehat\mu_t$ describes the corresponding posterior expectation over sampling targets. Fields that induce similar sampling targets may remain difficult to distinguish, and the posterior retains this ambiguity. Further note that $f^\star$ is the observed agent's estimate, which may differ from the physical environment. The ego agent's posterior describes uncertainty about that estimate, not a direct update from ocean measurements; disagreement between the recovered field and the ego agent's own field can explain different sampling decisions even when both agents pursue the same scientific task.
+The posterior mean $\widehat f_t$ is the reconstructed field shown in Fig.~\ref{fig:front-reconstructions}; $\widehat\mu_t$ describes the corresponding posterior expectation over sampling targets. \textbf{The goal of Arrodes, then, is to minimize the error between the posterior mean}  $\widehat f_t$ \textbf{and the generating field,} $f^\star$.
 
-\subsection{Inference from Exploration}
 
-For each candidate field, Arrodes computes a sampling target using the known objective and compares it with the observed trajectory's spatial distribution. This discrepancy determines a posterior over SOM states or EOF coefficients, from which the field is reconstructed by posterior averaging. Algorithm~\ref{alg:arrodes} summarizes the computation; Sec.~IV defines the discrepancy and posterior updates.
+% Fields that induce similar sampling targets may remain difficult to distinguish, and the posterior retains this ambiguity. Further note that $f^\star$ is the observed agent's estimate, which may differ from the physical environment. The ego agent's posterior describes uncertainty about that estimate, not a direct update from ocean measurements; disagreement between the recovered field and the ego agent's own field can explain different sampling decisions even when both agents pursue the same scientific task.
+
+\section{Environmental Models}
+
+Arrodes uses two methods to reduce $\mathcal{F}$ to a tractable space for inference. Self-organizing maps (SOMs) define a discrete hypothesis set, while empirical orthoganal functions provide a fixed-size basis set that can describe a continuous hypothesis space.
+
+% \subsection{Inference from Exploration}
+
+\subsection{Finite SOM Model}
+
+A SOM organizes learned environmental states on a graph $\mathcal G=(V,E_G)$. During training, the closest prototype and its graph neighbors move toward each sampled environmental state \cite{mccammon2024som}. Each learned state defines a field $s_k\in\mathbb R^G$ in the representation used for inference, where $G$ is the number of spatial field values. The resulting family retains recurring environmental patterns and the neighborhood relationships among them. Arrodes uses
+\begin{equation}
+  \mathcal F_{\mathrm{SOM}}=\{s_1,\ldots,s_K\}
+  \label{eq:som-worlds}
+\end{equation}
+as its finite hypotheses. A posterior on the vertices thus identifies the learned states consistent with the trajectory, with the posterior mean $\sum_k p_t(k)s_k$ a mixture of those states.
+
+\subsection{Continuous EOF Model}
+
+The continuous model uses an EOF-basis decomposition derived from work by Young \emph{et al.} \cite{young2024greedy}. Let $f^{(1)},\ldots,f^{(H)}\in\mathbb R^G$ be fields from the prior environmental record, $\bar f$ their mean, $W=\operatorname{diag}(v_1,\ldots,v_G)$ the full-field spatial weight matrix, and
+\begin{equation}
+  \bar f=\frac{1}{H}\sum_{h=1}^{H}f^{(h)},\quad
+  X=\left[f^{(1)}-\bar f,\ldots,f^{(H)}-\bar f\right].
+\end{equation}
+From the weighted singular value decomposition
+\begin{equation}
+  W^{1/2}X=U\Sigma V^\top,
+\end{equation}
+we retain $R$ modes and set $\Phi=W^{-1/2}U_{:,1:R}$. The weighted orthogonality $\Phi^\top W\Phi=I_R$ gives the projection and reconstruction
+\begin{equation}
+  \boldsymbol a(f)=\Phi^\top W(f-\bar f),\qquad
+  f_{\boldsymbol a}=\bar f+\Phi\boldsymbol a.
+  \label{eq:eof-field}
+\end{equation}
+The ego agent supplies the Gaussian prior $p_0(\boldsymbol a)=\mathcal N(\boldsymbol a;\boldsymbol a_0,P_0)$. In the simulated trials, $\boldsymbol a_0=\boldsymbol0$ reconstructs the mean environment and $P_0$ retains the correlated coefficient variation estimated from the prior record. Projecting each SOM state through \eqref{eq:eof-field} places the finite hypotheses and continuous particles in the same rank-$R$ coefficient geometry. This coefficient projection allows direct comparison of the SOM posterior's environmental support with that of the continuous model.
+
+\section{Behavior-Conditioned Inference}
+
+For each candidate field, Arrodes computes a sampling target using the known objective and compares it with the observed trajectory's spatial distribution. This discrepancy determines a posterior over SOM states or EOF coefficients, from which the field is reconstructed by posterior averaging. Algorithm~\ref{alg:arrodes} provides a summary of the computation for both the finite and continuous inference modes.
 
 \begin{algorithm}[H]
 \caption{Arrodes environmental belief inference}
@@ -114,36 +163,6 @@ For each candidate field, Arrodes computes a sampling target using the known obj
 \State \Return both posterior histories and reconstructed fields
 \end{algorithmic}
 \end{algorithm}
-
-\subsection{Finite SOM Model}
-
-A SOM organizes learned environmental states on a graph $\mathcal G=(V,E_G)$. During training, the closest prototype and its graph neighbors move toward each sampled environmental state \cite{mccammon2024som}. Each learned state defines a field $s_k\in\mathbb R^G$ in the representation used for inference, where $G$ is the number of spatial field values. The resulting family retains recurring environmental patterns and the neighborhood relationships among them. Arrodes uses
-\begin{equation}
-  \mathcal F_{\mathrm{SOM}}=\{s_1,\ldots,s_K\}
-  \label{eq:som-worlds}
-\end{equation}
-as its finite hypotheses. A posterior over the vertices identifies learned states consistent with the trajectory, while the posterior mean $\sum_k p_t(k)s_k$ reconstructs a mixture of those states.
-
-\subsection{Continuous EOF Model}
-
-The continuous model uses an EOF expansion within the environmental modeling approach being developed in SCRIBE \cite{scribe2026}. Let $f^{(1)},\ldots,f^{(H)}\in\mathbb R^G$ be fields from the prior environmental record, $\bar f$ their mean, $W=\operatorname{diag}(v_1,\ldots,v_G)$ the full-field spatial weight matrix, and
-\begin{equation}
-  \bar f=\frac{1}{H}\sum_{h=1}^{H}f^{(h)},\quad
-  X=\left[f^{(1)}-\bar f,\ldots,f^{(H)}-\bar f\right].
-\end{equation}
-From the weighted singular value decomposition
-\begin{equation}
-  W^{1/2}X=U\Sigma V^\top,
-\end{equation}
-we retain $R$ modes and set $\Phi=W^{-1/2}U_{:,1:R}$. The weighted orthogonality $\Phi^\top W\Phi=I_R$ gives the projection and reconstruction
-\begin{equation}
-  \boldsymbol a(f)=\Phi^\top W(f-\bar f),\qquad
-  f_{\boldsymbol a}=\bar f+\Phi\boldsymbol a.
-  \label{eq:eof-field}
-\end{equation}
-The ego agent supplies the Gaussian prior $p_0(\boldsymbol a)=\mathcal N(\boldsymbol a;\boldsymbol a_0,P_0)$. In the simulated trials, $\boldsymbol a_0=\boldsymbol0$ reconstructs the mean environment and $P_0$ retains the correlated coefficient variation estimated from the prior record. Projecting each SOM state through \eqref{eq:eof-field} places the finite hypotheses and continuous particles in the same rank-$R$ coefficient geometry. The SOM posterior still reconstructs its complete prototype fields; the coefficient projection is used to compare their environmental support with that of the continuous model.
-
-\section{Behavior-Conditioned Inference}
 
 \subsection{Trajectory Discrepancy and Behavioral Evidence}
 
@@ -167,9 +186,9 @@ For the Gaussian kernel $k_\ell(x,y)=\exp[-\|x-y\|^2/(2\ell^2)]$, the discrepanc
 \end{split}
 \label{eq:mmd-expanded}
 \end{equation}
-The first term describes the observed coverage, the last describes the candidate target, and the cross term measures their spatial agreement. Nearby visits contribute through their kernel similarity, avoiding a hard partition into spatial bins. The discrepancy therefore expresses the assumed allocation relationship without assigning an independent likelihood to each control action.
+The first term describes the observed coverage, the last describes the candidate target, and the cross term measures their spatial agreement. Nearby visits contribute through their kernel similarity, avoiding a hard partition into spatial bins while still allowing the allocation relationship to be expressed in the discrepancy measure.
 
-A short prefix has covered only part of its target and should exert less influence than a mature trajectory. Arrodes uses the behavioral energy and generalized likelihood
+A short prefix would have covered only part of its target and should exert less influence than a mature trajectory. Thus, Arrodes scales the behavioral energy and generalized likelihood
 \begin{equation}
   \mathcal E_t(f)=\frac{\beta_t}{s_D}D_t(f),\qquad
   L_t(f)=\exp[-\mathcal E_t(f)],
@@ -180,7 +199,7 @@ with
   \beta_t=\beta_{\max}\frac{t^p}{t^p+t_{1/2}^{p}}.
   \label{eq:maturity}
 \end{equation}
-The scale $s_D$ is the median pairwise target-measure discrepancy, calibrated using prior environmental fields for EOF inference and learned states for SOM inference. At observation $t$, the likelihood is evaluated against the complete prefix $z_{1:t}$; successive cumulative prefixes are not treated as independent trajectories.
+The scale $s_D$ is the median pairwise target-measure discrepancy, calibrated using prior environmental fields for EOF inference and learned states for SOM inference. At observation $t$, the likelihood is evaluated against the complete prefix $z_{1:t}$.
 
 \subsection{Finite SOM Update}
 
@@ -190,13 +209,14 @@ Let $\rho_k$ be the prior probability of SOM state $s_k$. Since the hypothesis s
   \widehat f_t^{\mathrm{SOM}}=\sum_{k=1}^{K}p_t(k)s_k.
   \label{eq:som-posterior}
 \end{equation}
-This update is exact within the finite model. To align the initial preference of both formulations, the SOM states are projected to EOF coefficients $\boldsymbol a_k$ and assigned
+This update is exact in this finite mode. To align the initial preference of both formulations, the SOM states are projected to EOF coefficients $\boldsymbol a_k$ and assigned
 \begin{equation}
   \rho_k\propto\exp\!\left[-\tfrac12(\boldsymbol a_k-\boldsymbol a_0)^\top
   P_0^{-1}(\boldsymbol a_k-\boldsymbol a_0)\right].
   \label{eq:som-prior}
 \end{equation}
-The posterior can quickly concentrate on complete learned states, but every reconstructed field remains a mixture of the SOM prototypes.
+
+This transformation does not affect the way the posterior can converge on learned SOM states.
 
 \subsection{Continuous EOF Update}
 
@@ -206,7 +226,7 @@ The EOF formulation conditions the Gaussian coefficient prior on the same behavi
   \exp[-\mathcal E_t(f_{\boldsymbol a})].
   \label{eq:eof-posterior}
 \end{equation}
-This posterior can occupy coefficient combinations absent from the finite model, while remaining limited by the retained EOF basis. Arrodes represents \eqref{eq:eof-posterior} in Gen \cite{cusumano2019gen} and uses paired forward and backward proposals to move particles between successive prefix-conditioned targets, following SMCP$^3$ \cite{lew2023smcp3}.
+This posterior can freely explore coefficient combinations absent from the finite model, while retaining structure from the EOF basis. Arrodes represents \eqref{eq:eof-posterior} using the open-ended generative inference mechanism Gen \cite{cusumano2019gen}, and uses paired forward and backward proposals to move particles between successive prefix-conditioned targets, following SMCP$^3$ \cite{lew2023smcp3}.
 
 The proposal follows a local Gauss--Newton approximation. Let $m_t$ be the locally optimized coefficient vector, $J_t=\partial\mu(f_{\boldsymbol a})/\partial\boldsymbol a|_{m_t}$, and $\mathbf K$ the spatial kernel matrix at the quadrature sites. The transport covariance is
 \begin{equation}
@@ -227,13 +247,21 @@ The backward proposal applies $T_t^{-1}$. Writing $\widetilde\pi_t=p_0L_t$ for t
  \left|\det(B_tB_{t-1}^{-1})\right|.
  \label{eq:transport-weight}
 \end{equation}
-Normalizing these weights corrects both the change in behavioral evidence and the volume change under transport. Thus the local Gaussian approximation guides particle motion while the weights continue to target \eqref{eq:eof-posterior}. In particular, a short prefix may move the local approximation toward a field explaining only the portion of the domain visited so far.
+Normalizing these weights corrects both the change in behavioral evidence and the volume change under transport. Thus, the local Gaussian approximation guides particle motion while the weights continue to  the unnormalized \eqref{eq:eof-posterior}. In particular, a short trajectory prefix may move the local approximation toward a field explaining only the portion of the domain visited so far.
 
 When $N_{\mathrm{eff}}=(\sum_i(w_t^i)^2)^{-1}$ falls below a fraction of the particle count, residual resampling allocates copies according to the weights. Metropolis--Hastings moves then propose coefficient alternatives and accept them using the posterior and proposal-density ratio. These moves preserve $\pi_t$ while allowing replicated particles to explore distinct explanations. The environmental reconstruction is
 \begin{equation}
  \widehat f_t^{\mathrm{EOF}}=\bar f+\Phi\sum_{i=1}^{N}w_t^i\boldsymbol a_t^i.
 \end{equation}
 Continuous inference incurs greater computation than finite enumeration, but supports recovery between and beyond the learned SOM states.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=0.9\textwidth]{figs/all_world_space_trials.png}
+  \caption{The finite and continuous beliefs occupy the same EOF coefficient space. Across fields at increasing distance $\delta_{\mathrm{SOM}}$ from the SOM region, the continuous particles move from the mean-environment prior toward fields whose sampling targets explain the observed trajectory. The SOM states delimit the region available to the finite posterior mean; each panel projects onto the direction from the prior mean to the generating belief and an orthogonal direction of posterior variation. Coordinates are in prior standard deviations; distances are evaluated in the full coefficient space. Triangle size indicates SOM posterior support.}
+  \label{fig:world-space}
+  \vspace{-.5cm}
+\end{figure*}
 
 \section{Simulated Ocean Exploration}
 
@@ -243,7 +271,7 @@ We use two years of hourly surface-current output from a Regional Ocean Modeling
 
 For a field $f$, the simulated objective uses $r(f,x)=|f(x)|+\epsilon$, with $\epsilon$ equal to $0.01$ times the training-field standard deviation. The field values remain in their unit-mean curl-shape representation for reconstruction and RMSE. Only the quadrature masses in \eqref{eq:target-measure} are normalized for trajectory planning and discrepancy evaluation.
 
-The ego prior is centered at $\boldsymbol a_0=\boldsymbol0$, the EOF mean environment, with the correlated covariance estimated from the calibration record. Both formulations use 196 quadrature sites and a Gaussian kernel bandwidth of $0.2$ in normalized domain coordinates. For every generating field, the observed agent follows a 100-location kernel-ergodic trajectory toward its sampling target. Arrodes receives those locations and their dwell times, but none of the environmental data available to the observed agent. Continuous inference uses 512 particles, an effective-sample-size threshold of $0.65N$, two rejuvenation steps, and $\beta_{\max}=125$, $t_{1/2}=18$, and $p=2$. The proposal uses eight local optimization steps and $\gamma=1$. The planner uses 180 optimization iterations, unit dwell weights, and a speed of $0.0625$ in domain coordinates per second; temporal plots use cumulative path length divided by this speed.
+The ego prior is centered at $\boldsymbol a_0=\boldsymbol0$, the EOF mean environment, with the correlated covariance estimated from the calibration record. Both formulations use 196 quadrature sites and a Gaussian kernel bandwidth of $0.2$ in normalized domain coordinates. For every generating field, the observed agent follows a 100-location kernel-ergodic trajectory toward its sampling target. Arrodes receives those locations and their dwell times, but none of the environmental data available to the observed agent. Continuous inference uses 512 particles, an effective-sample-size threshold of $0.65N$, two rejuvenation steps, and $\beta_{\max}=125$, $t_{1/2}=18$, and $p=2$. The proposal uses eight local optimization steps and $\gamma=1$. The planner uses 180 optimization iterations, unit dwell weights, and an abritrarily chosen speed of $0.0625$ in domain coordinates per second; temporal plots use cumulative path length divided by this speed.
 
 \subsection{Distance from the Finite Representation}
 
@@ -267,29 +295,35 @@ One unit of $\delta_{\mathrm{SOM}}$ is one standard deviation in the correlated 
 
 We compute \eqref{eq:som-distance} offline for all 568 candidate fields, then select five temporally separated fields near each of ten distances across the available range. Two planner starting positions generate different observable trajectories from every field, yielding 100 simulated trials. The group-mean distances range from $0.61$ to $4.78$ prior standard deviations. We report spatially weighted field RMSE; aggregate markers show the mean across ten trajectories at each distance and error bars show one standard deviation.
 
-\begin{figure*}[t]
+
+
+\begin{figure}[t]
   \centering
-  \includegraphics[width=0.96\textwidth]{figs/all_world_space_trials.png}
-  \caption{The finite and continuous beliefs occupy the same EOF coefficient space. Across fields at increasing distance $\delta_{\mathrm{SOM}}$ from the SOM region, the continuous particles move from the mean-environment prior toward fields whose sampling targets explain the observed trajectory. The SOM states delimit the region available to the finite posterior mean; each panel projects onto the direction from the prior mean to the generating belief and an orthogonal direction of posterior variation. Coordinates are in prior standard deviations; distances are evaluated in the full coefficient space. Triangle size indicates SOM posterior support.}
-  \label{fig:world-space}
+  \includegraphics[width=.8\columnwidth]{figs/final_recovery_by_som_distance.png}
+  \caption{Final field recovery as the generating field moves away from the region spanned by the SOM states. Markers show mean reconstruction error over repeated fields and starting positions at their actual mean distance; error bars show one standard deviation. EOF inference generally yields a closer reconstruction, with substantial variation across fields and starting positions.}
+  \label{fig:final-recovery}
+  \vspace{-.2cm}
+\end{figure}
+
+\begin{figure*}[ht!]
+  \centering
+  \includegraphics[width=\textwidth]{figs/recovery_over_time.png}
+  \caption{Accuracy of EOF-basis field reconstruction over observation time. The left and center panels respectively show the RMSE of the environment field reconstruction and the target-to-target MMD$^2$ between the observed agent's belief $f^\star$ and the highest-weight particles (gray-black) and the filter posterior (red). The right panel compares the discrepancy of the observed trajectory against the proposed fields of the highest-weight particles (gray/black), the filter posterior (red), and the observed agent's belief (green). Reconstruction error is high for short observation times when the trajectory remains ergodically unrepresentative of underlying field, and then drops as increasing coverage gives greater evidence.}
+  \label{fig:detailed-recovery}
+  \vspace{-.2cm}
 \end{figure*}
 
 \section{Results}
 
 \subsection{Reconstructing the Observed World Belief}
 
-The inferred fields in Fig.~\ref{fig:front-reconstructions} recover prominent circulation structures in the observed agent's belief from its trajectory alone. Their location and extent explain the agent's concentration of sampling effort. Fine structure is less completely recovered, but the reconstructions distinguish different environmental beliefs without access to the measurements that produced them.
+The inferred fields in Fig.~\ref{fig:front-reconstructions} recover prominent circulation structures in the observed agent's belief from its trajectory. Their location and extent explain the agent's concentration of sampling effort. Fine structure is less recovered, but the reconstructions distinguish different environmental beliefs without access to the measurements that produced them.
 
 Figure~\ref{fig:world-space} shows how these reconstructions depart from the ego agent's prior. The EOF posterior particles move away from the mean-environment prior toward the generating belief, while the SOM posterior selects among existing states. Their common coefficient coordinates show the extension afforded by EOF inference: reconstructed fields can lie beyond the region spanned by SOM mixtures.
 
 \subsection{Recovery beyond the SOM Region}
 
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=\columnwidth]{figs/final_recovery_by_som_distance.png}
-  \caption{Final field recovery as the generating field moves away from the region spanned by the SOM states. Markers show mean reconstruction error over repeated fields and starting positions at their actual mean distance; error bars show one standard deviation. EOF inference generally yields a closer reconstruction, with substantial variation across fields and starting positions.}
-  \label{fig:final-recovery}
-\end{figure}
+
 
 The SOM reconstruction remains a useful approximation, but its error increases as generating fields depart from the learned states. The EOF formulation can account for some of this departure by adjusting coefficients beyond the SOM region.
 
@@ -299,25 +333,21 @@ EOF inference achieves lower mean final RMSE at nine of the ten distances in Fig
 
 This improvement requires a longer observation history. In Fig.~\ref{fig:detailed-recovery}, EOF field error initially rises while even the generating target has high discrepancy with the observed trajectory. Fields matching the incomplete route can therefore receive more support than the belief that actually generated it. As the route covers more of the target, discrepancy falls and both field and target reconstruction improve.
 
-\begin{figure*}[p]
-  \centering
-  \includegraphics[width=0.88\textwidth]{figs/detailed_recovery_trial_02.png}
-  \caption{Continuous reconstruction develops as coverage becomes representative, shown near the SOM region ($\delta_{\mathrm{SOM}}=0.91$). The upper panels show environmental-field and target-field RMSE; gray curves describe highly weighted particles and red curves their posterior aggregate. The lower left shows trajectory-to-generating-target MMD$^2$; the lower right shows inferred-target discrepancy relative to the EOF representation of the generating belief. The early rise and subsequent decline in reconstruction error occur as the trajectory becomes more representative of its generating target.}
-  \label{fig:detailed-recovery}
-\end{figure*}
+
 
 The histories in Fig.~\ref{fig:recovery-histories} show this behavior across the range of distances. SOM estimates often settle early, while EOF estimates undergo transient error increases before improving. The additional observations constrain continuous alternatives that a short route cannot distinguish.
 
-\begin{figure*}[p]
+\begin{figure*}[ht]
   \centering
-  \includegraphics[width=\textwidth]{figs/all_recovery_histories.png}
+  \includegraphics[width=0.9\textwidth]{figs/all_recovery_histories.png}
   \caption{Finite SOM and continuous EOF reconstruction histories across increasing distance from the SOM region. Colored curves show field RMSE on the left axis; black stars show trajectory-to-generating-target MMD$^2$ on the right. Markers indicate observations at elapsed physical times, and panel labels give $\delta_{\mathrm{SOM}}$ in prior standard deviations. Finite reconstructions often settle early, whereas continuous recovery develops as the route covers the generating target. The generating target is used only for simulated evaluation.}
   \label{fig:recovery-histories}
+  \vspace{-.5cm}
 \end{figure*}
 
 The delay varies across fields: some EOF reconstructions improve rapidly after a sharp discrepancy decline, while others improve later in the route. The dominant association is thus between declining discrepancy and better EOF reconstruction, providing an empirical basis for choosing when its greater capacity becomes useful.
 
-\section{Discussion}
+% \section{Discussion}
 
 \subsection{Choosing between SOM and EOF Inference}
 
@@ -329,23 +359,31 @@ We therefore propose using the SOM reconstruction initially and treating a sharp
 
 Fields farther from the SOM region place greater demands on continuous inference, but distance alone does not determine convergence time. A field with separated sampling regions may require many observations before all are represented in the trajectory. The histories consequently support a dependence on both departure from the prior representation and the spatial evidence accumulated during exploration.
 
-\subsection{Coordination and Scientific Interpretation}
+% \subsection{Coordination and Scientific Interpretation}
 
-An AUV could use the inferred field to anticipate a teammate's sampling priorities and select complementary measurements. Differences between their models would identify regions where further observations are useful. Arrodes provides the missing model for this planning process; evaluating the resulting coordination is the next step.
 
-For scientists aboard a support vessel, the reconstruction identifies the environmental assumptions behind a route. Repeated sampling around a predicted circulation feature becomes interpretable once that feature is visible in the inferred belief. Comparison with independent observations could then distinguish a scientifically useful response from a decision driven by an inaccurate onboard model.
 
-\subsection{Scope and Extensions}
 
-The simulated trials use static field beliefs, complete position traces, and a known curl-based sampling objective. They isolate inference of the environmental model from simultaneous uncertainty about goals or changes in the model during exploration. Extending the method to intermittent observations and evolving beliefs will require accounting for when a trajectory was generated under each estimate.
 
-Our use of curl magnitude reflects the simulated mission of monitoring coastal circulation: it assigns sampling value to rotational structures in the flow data. The reconstruction is consequently a scalar field of this quantity, rather than a recovery of every velocity component or a direct estimate of vertical transport. Other scientific tasks can transform a field into sampling value differently; applying Arrodes then requires specifying that transformation and examining which aspects of the underlying field it preserves in behavior.
+% \subsection{Scope and Extensions}
 
-The SOM cannot reconstruct arbitrary unfamiliar fields, and the EOF model remains limited to combinations of its retained modes. The exploration objective also determines which field differences are observable: fields that induce the same sampling target cannot be distinguished by this behavioral model. Testing other objectives and informative planners would establish how broadly the discrepancy formulation applies beyond the ergodic trajectories considered here.
+% 
+
+% Our use of curl magnitude reflects the simulated mission of monitoring coastal circulation: it assigns sampling value to rotational structures in the flow data. The reconstruction is consequently a scalar field of this quantity, rather than a recovery of every velocity component or a direct estimate of vertical transport. Other scientific tasks can transform a field into sampling value differently; applying Arrodes then requires specifying that transformation and examining which aspects of the underlying field it preserves in behavior.
+
+% The SOM cannot reconstruct arbitrary unfamiliar fields, and the EOF model remains limited to combinations of its retained modes. The exploration objective also determines which field differences are observable: fields that induce the same sampling target cannot be distinguished by this behavioral model. Testing other objectives and informative planners would establish how broadly the discrepancy formulation applies beyond the ergodic trajectories considered here.
 
 \section{Conclusion}
 
-Arrodes extends belief inference to the environmental fields that guide exploratory sampling. SOM states provide a finite set of spatially resolved world hypotheses for exact Bayesian evaluation; EOF coefficients generalize these hypotheses to a continuous space that can represent beliefs outside the SOM's range. The simulated reconstructions show the resulting tradeoff: SOM inference gives an efficient early approximation, whereas EOF inference generally recovers the observed agent's belief more closely once enough of its trajectory has been observed. The relationship between recovery and declining ergodic discrepancy motivates switching between these approaches as evidence accumulates. This ability to reconstruct the model behind an exploration decision is a foundation for coordinating vehicles and explaining their behavior when their environmental knowledge cannot be shared directly.
+Arrodes extends belief inference to the environmental fields that guide exploratory sampling. SOM learned states provide a finite set of spatially resolved world hypotheses for exact Bayesian evaluation; EOF-basis decompositions generalize these hypotheses to a continuous hyperspace that can represent beliefs outside the SOM's range. The simulated reconstructions show the benefits of utilizing both modes: SOM inference gives an efficient early approximation, while EOF inference recovers the observed agent's belief more accurately once enough of its trajectory has been observed. The relationship between recovery and declining ergodic discrepancy motivates switching between these approaches as evidence accumulates. This ability to reconstruct the model behind an exploration decision is foundational for robots to coordinate behavior and explain their behavior when their accumulated knowledge cannot be shared directly.
+
+An AUV could use this inferred field to anticipate a teammate's sampling priorities and select complementary measurements; differences between their models could indicate regions that may contain novel information. For scientists aboard a support vessel, this reconstruction identifies the environmental assumptions behind a route; otherwise-anomalous repeated sampling around a novel feature becomes interpretable once that feature is visible in the inferred belief. Comparison with independent observations could then distinguish what is a scientifically useful response from a decision driven by an inaccurate onboard model.
+
+The simulated experiments use static field beliefs, complete position traces, and a known curl-based sampling objective. They isolate inference of the environmental model from simultaneous uncertainty about goals or changes in the model during exploration. In the future we plan to extend Arrodes to intermittent observations and evolving beliefs by accounting for when a trajectory was generated under each estimate. With the underlying belief of agents now explainable, the next step is to develop a distributed coordination system that can leverage this new understanding.
+
+\section*{Acknowledge of Use of AI Tools}
+
+Generative AI was used to generate portions of the code used in this paper.  AI was not used to write any portion of the manuscript text, nor to generate any figures apart from writing code to generate plots from experimental data.
 
 \balance
 
